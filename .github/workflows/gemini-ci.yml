@@ -18,7 +18,9 @@ jobs:
           gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
           prompt: |
             You are a CI test.
-            Reply with:
-            - "Gemini CLI works"
-            - Repository name
-            - Current branch
+            Reply strictly with JSON:
+            {
+                "status": "Gemini CLI works",
+                "repository": "${{ github.repository }}",
+                "branch": "${{ github.ref_name || github.ref }}"
+            }
