@@ -1,4 +1,4 @@
-name: Gemini CLI Smoke Test
+name: Gemini CLI Direct Smoke Test
 
 on:
   workflow_dispatch:
@@ -14,32 +14,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Run Gemini CLI Smoke Test
-        id: gemini_test
-        uses: google-github-actions/run-gemini-cli@main
+      - name: Install Gemini CLI
+        run: |
+          npm install -g @google/gemini-cli
+
+      - name: Run Gemini CLI directly
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        with:
-          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
-          gemini_cli_version: latest
-          prompt: |
-            You are performing a CI smoke test.
-            Reply strictly with a JSON object only, with keys:
-            {
-              "status": "Gemini CLI works",
-              "repository": "${{ github.repository }}",
-              "branch": "${{ github.ref_name || github.ref }}"
-            }
-            Output JSON **only** to stdout, no other text.
-
-      - name: Print Gemini CLI output
         run: |
-          echo "=== Gemini CLI STDOUT ==="
-          if [[ -f "${RUNNER_TEMP}/gemini-out"* ]]; then
-            cat ${RUNNER_TEMP}/gemini-out*
-          else
-            echo "No stdout log found"
-          fi
-          echo "=== Step outputs ==="
-          echo "${{ steps.gemini_test.outputs.gemini_response }}"
-          echo "=== End of Output ==="
+          echo "=== Gemini CLI Execution ==="
+          npx @google/gemini-cli \
+            --prompt "You are performing a CI smoke test. Reply strictly with a JSON object containing keys: status, repository, branch" \
+            --output-format json
+          echo "=== End of Execution ==="
