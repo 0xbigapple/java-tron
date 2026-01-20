@@ -22,15 +22,9 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_DEBUG: true
         with:
-          prompt: |
-            /gemini-review
-            # 实验性 Task: 请在正式 review 前，将模型自报信息输出到文件 .gemini/self_report.json
-            {
-              "self_reported_model": "<请输出你生成该回答时使用的模型名称>",
-              "confidence": "<high|medium|low>",
-              "notes": "<如无法确定请说明 unknown>"
-            }
-            然后给出针对本 PR 的简要 review 建议
+          gemini_api_key: '${{ secrets.GEMINI_API_KEY }}'
+          gemini_debug: true
+          prompt: "test Task: 请在正式 review 前，将自身使用的模型信息、置信度输出到文件 .gemini/self_report.json, 不确定写unknow。然后给出针对本 PR 的简要 review 建议"
 
       # 4️⃣ 打印 self-report
       - name: Show Gemini Self-Reported Model
