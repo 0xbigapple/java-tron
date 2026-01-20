@@ -2268,10 +2268,17 @@ public class Manager {
 
   private void postLogsFilter(final BlockCapsule blockCapsule, boolean solidified,
       boolean removed) {
+    long blockNumber = blockCapsule.getNum();
     if (!blockCapsule.getTransactions().isEmpty()) {
-      long blockNumber = blockCapsule.getNum();
-      List<TransactionInfo> transactionInfoList
-              = getTransactionInfoByBlockNum(blockNumber).getTransactionInfoList();
+      List<TransactionInfo> transactionInfoList;
+      // Optimization: If the block result is already in memory, use it directly.
+      // Avoids re-querying the database for data just written.
+      if (blockCapsule.getResult() != null) {
+        transactionInfoList = blockCapsule.getResult().getInstance().getTransactioninfoList();
+      } else {
+        // Fallback to querying from DB if not available in memory.
+        transactionInfoList = getTransactionInfoByBlockNum(blockNumber).getTransactionInfoList();
+      }
       LogsFilterCapsule logsFilterCapsule = new LogsFilterCapsule(blockNumber,
           blockCapsule.getBlockId().toString(), blockCapsule.getBloom(), transactionInfoList,
           solidified, removed);
