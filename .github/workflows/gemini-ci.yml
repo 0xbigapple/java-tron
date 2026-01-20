@@ -1,12 +1,14 @@
-name: Gemini CLI Smoke Test
+name: Gemini CLI Strict JSON Smoke Test
 
 on:
   workflow_dispatch:
   pull_request:
+    types: [opened, synchronize]
 
 jobs:
   gemini-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
 
     steps:
       - name: Checkout repo
@@ -17,10 +19,17 @@ jobs:
         with:
           gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
           prompt: |
-            You are a CI test.
-            Reply strictly with JSON:
+            You are performing a CI smoke test.
+            Reply strictly with a JSON object only, without any extra text.
+            Include these keys:
             {
-                "status": "Gemini CLI works",
-                "repository": "${{ github.repository }}",
-                "branch": "${{ github.ref_name || github.ref }}"
+              "status": "Gemini CLI works",
+              "repository": "${{ github.repository }}",
+              "branch": "${{ github.ref_name || github.ref }}"
             }
+
+      - name: Print Gemini CLI output
+        run: |
+          echo "=== Gemini CLI STDOUT ==="
+          echo "${{ steps.gemini_test.outputs.gemini_response }}"
+          echo "=== End of Gemini CLI Output ==="
