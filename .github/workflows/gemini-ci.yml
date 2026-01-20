@@ -18,27 +18,27 @@ jobs:
         id: gemini_test
         uses: google-github-actions/run-gemini-cli@main
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}  # CLI 直接读取
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         with:
-          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}  # Action 内部读取
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
           gemini_cli_version: latest
           prompt: |
             You are performing a CI smoke test.
-            Reply strictly with a JSON object only, without any extra text.
-            Include keys:
+            Reply strictly with a JSON object only, with keys:
             {
               "status": "Gemini CLI works",
               "repository": "${{ github.repository }}",
               "branch": "${{ github.ref_name || github.ref }}"
             }
+            Output JSON **only** to stdout, no other text.
 
-      - name: Print Gemini CLI raw stdout and step outputs
+      - name: Print Gemini CLI output
         run: |
-          echo "=== Gemini CLI STDOUT (raw) ==="
-          if [[ -f .gemini/stdout.log ]]; then
-            cat .gemini/stdout.log
+          echo "=== Gemini CLI STDOUT ==="
+          if [[ -f "${RUNNER_TEMP}/gemini-out"* ]]; then
+            cat ${RUNNER_TEMP}/gemini-out*
           else
-            echo "No .gemini/stdout.log found"
+            echo "No stdout log found"
           fi
           echo "=== Step outputs ==="
           echo "${{ steps.gemini_test.outputs.gemini_response }}"
