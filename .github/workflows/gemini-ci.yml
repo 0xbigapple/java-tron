@@ -1,0 +1,24 @@
+name: Gemini CLI Smoke Test
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+jobs:
+  gemini-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Run Gemini CLI (smoke test)
+        uses: google-github-actions/run-gemini-cli@v1
+        with:
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          prompt: |
+            You are a CI test.
+            Reply with:
+            - "Gemini CLI works"
+            - Repository name
+            - Current branch
