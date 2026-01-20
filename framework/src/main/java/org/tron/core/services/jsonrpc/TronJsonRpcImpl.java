@@ -205,7 +205,7 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
       // compare with hashcode() first, then with equals(). If not exist, put it.
       cachedBlockHash = blockHashCache.get(originalBlockHash, () -> originalBlockHash);
     } catch (ExecutionException e) {
-      logger.error("Getting/loading blockHash from cache failed", e); // never happen
+      logger.error("Getting/loading blockHash from cache failed", e); //never happen
       cachedBlockHash = originalBlockHash;
     }
     while (it.hasNext()) {
@@ -1431,7 +1431,7 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
 
   @Override
   public String newBlockFilter() throws JsonRpcMethodNotFoundException,
-      JsonRpcExceedLimitException {
+      JsonRpcInvalidParamsException {
     disableInPBFT("eth_newBlockFilter");
 
     Map<String, BlockFilterAndResult> blockFilter2Result;
@@ -1441,7 +1441,7 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
       blockFilter2Result = blockFilter2ResultSolidity;
     }
     if (blockFilter2Result.size() >= maxBlockFilterNum) {
-      throw new JsonRpcExceedLimitException(
+      throw new JsonRpcInvalidParamsException(
           "exceed max block filters: " + maxBlockFilterNum + ", try again later");
     }
 
@@ -1574,7 +1574,6 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
   @Override
   public void close() throws IOException {
     logElementCache.invalidateAll();
-    blockHashCache.invalidateAll();
     ExecutorServiceManager.shutdownAndAwaitTermination(sectionExecutor, esName);
   }
 

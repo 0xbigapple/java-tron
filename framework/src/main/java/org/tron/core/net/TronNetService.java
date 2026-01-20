@@ -87,9 +87,6 @@ public class TronNetService {
   public void start() {
     try {
       init = true;
-      setP2pConfig(getConfig());
-      p2pService.start(p2pConfig);
-      p2pService.register(p2pEventHandler);
       advService.init();
       syncService.init();
       peerStatusCheck.init();
@@ -101,6 +98,12 @@ public class TronNetService {
       PeerManager.init();
       relayService.init();
       effectiveCheckService.init();
+
+      // Move P2P service start to the end
+      setP2pConfig(getConfig());
+      p2pService.start(p2pConfig);
+      p2pService.register(p2pEventHandler);
+
       logger.info("Net service start successfully");
     } catch (Exception e) {
       throw new TronError(e, TronError.ErrCode.TRON_NET_SERVICE_INIT);

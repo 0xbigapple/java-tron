@@ -30,6 +30,7 @@ import org.tron.core.services.jsonrpc.types.BuildArguments;
 import org.tron.core.services.jsonrpc.types.CallArguments;
 import org.tron.core.services.jsonrpc.types.TransactionReceipt;
 import org.tron.core.services.jsonrpc.types.TransactionResult;
+import org.tron.core.net.peer.Item;
 
 /**
  * Error code refers to https://www.quicknode.com/docs/ethereum/error-references
@@ -297,10 +298,10 @@ public interface TronJsonRpc {
 
   @JsonRpcMethod("eth_newBlockFilter")
   @JsonRpcErrors({
-      @JsonRpcError(exception = JsonRpcExceedLimitException.class, code = -32005, data = "{}"),
+      @JsonRpcError(exception = JsonRpcInvalidParamsException.class, code = -32005, data = "{}"),
       @JsonRpcError(exception = JsonRpcMethodNotFoundException.class, code = -32601, data = "{}"),
   })
-  String newBlockFilter() throws JsonRpcExceedLimitException, JsonRpcMethodNotFoundException;
+  String newBlockFilter() throws JsonRpcInvalidParamsException, JsonRpcMethodNotFoundException;
 
   @JsonRpcMethod("eth_uninstallFilter")
   @JsonRpcErrors({
@@ -505,7 +506,13 @@ public interface TronJsonRpc {
 
     @Override
     public int hashCode() {
-      return Objects.hash(blockHash, transactionHash, transactionIndex, logIndex, removed);
+      int result = 0;
+      result = 31 * result + (blockHash == null ? 0 : blockHash.hashCode());
+      result = 31 * result + (transactionHash == null ? 0 : transactionHash.hashCode());
+      result = 31 * result + (transactionIndex == null ? 0 : transactionIndex.hashCode());
+      result = 31 * result + (logIndex == null ? 0 : logIndex.hashCode());
+      result = result + (removed ? 1 : 0);
+      return result;
     }
 
   }
