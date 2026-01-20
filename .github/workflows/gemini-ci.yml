@@ -24,6 +24,7 @@ jobs:
         with:
           gemini_api_key: '${{ secrets.GEMINI_API_KEY }}'
           gemini_debug: true
+          gemini_model: '${{ vars.GEMINI_MODEL }}'
           prompt: "test Task: 请在正式 review 前，将自身使用的模型信息（我主要想知道是gemini2.5还是gemini3.0）、置信度输出到文件 .gemini/self_report.json, 不确定写unknow。或者如果是根据不同请求调用不同的model，也请明确写出。然后给出针对本 PR 的简要 review 建议"
 
       # 4️⃣ 打印 self-report
