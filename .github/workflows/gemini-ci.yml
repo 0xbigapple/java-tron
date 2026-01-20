@@ -1,29 +1,55 @@
-name: Gemini CLI Direct Smoke Test
+name: "Gemini PR Review - Model Self-Report Test"
 
 on:
-  workflow_dispatch:
   pull_request:
-    types: [opened, synchronize]
 
 jobs:
-  smoke-test:
+  model_debug_test:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      # 1️⃣ Checkout 仓库
+      - uses: actions/checkout@v6
 
-      - name: Install Gemini CLI
-        run: |
-          npm install -g @google/gemini-cli
+      # 2️⃣ 设置 debug 环境变量
+      - name: Set GEMINI_DEBUG
+        run: echo "GEMINI_DEBUG=true" >> $GITHUB_ENV
 
-      - name: Run Gemini CLI directly
+      # 3️⃣ Run Gemini CLI
+      - name: Run Gemini CLI with Model Self-Report
+        uses: google-github-actions/run-gemini-cli@main
+        id: gemini_debug
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_DEBUG: true
+        with:
+          prompt: |
+            /gemini-review
+            # 实验性 Task: 请在正式 review 前，将模型自报信息输出到文件 .gemini/self_report.json
+            {
+              "self_reported_model": "<请输出你生成该回答时使用的模型名称>",
+              "confidence": "<high|medium|low>",
+              "notes": "<如无法确定请说明 unknown>"
+            }
+            然后给出针对本 PR 的简要 review 建议
+
+      # 4️⃣ 打印 self-report
+      - name: Show Gemini Self-Reported Model
+        if: always()
         run: |
-          echo "=== Gemini CLI Execution ==="
-          npx @google/gemini-cli \
-            --prompt "You are performing a CI smoke test. Reply strictly with a JSON object containing keys: status, repository, branch" \
-            --output-format json
-          echo "=== End of Execution ==="
+          echo "=== Gemini Self-Reported Model ==="
+          if [ -f .gemini/self_report.json ]; then
+            cat .gemini/self_report.json
+          else
+            echo "No self_report.json found"
+          fi
+
+      # 5️⃣ 打印 telemetry 日志（可选）
+      - name: Show Gemini Telemetry
+        if: always()
+        run: |
+          echo "=== Gemini Telemetry ==="
+          if [ -f .gemini/telemetry.log ]; then
+            cat .gemini/telemetry.log
+          else
+            echo "No telemetry.log found"
+          fi
