@@ -18,6 +18,9 @@ The goal is to prevent:
 * Numeric precision, overflow, and cross-JVM non-determinism
 * Consensus and state inconsistency risks
 
+# IMPORTANT
+If this skill is active, explicitly mention: "PR Stability Skill Active"
+
 ---
 
 ## Scope
