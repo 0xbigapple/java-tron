@@ -37,8 +37,7 @@ jobs:
         run: |
           echo "HOME=$HOME"
           echo "WORKSPACE=$GITHUB_WORKSPACE"
-          find "$HOME/.gemini/skills" -type f
-          find "$GITHUB_WORKSPACE/.gemini/skills" -type f
+          ls -la "$GITHUB_WORKSPACE"
 
       - name: 'Run Gemini pull request review'
         uses: 'google-github-actions/run-gemini-cli@main' # ratchet:exclude
