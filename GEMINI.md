@@ -34,7 +34,6 @@ Examples include:
 * Randomness
 * Unstable iteration order
 * Floating-point arithmetic
-* Inconsistent handling of `Proposal / Block / View / Round`
 
 ---
 
