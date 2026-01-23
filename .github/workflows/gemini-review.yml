@@ -28,6 +28,16 @@ jobs:
       - name: 'Checkout repository'
         uses: 'actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8' # ratchet:actions/checkout@v6
 
+      - name: 'Install Gemini skills'
+        run: |
+          mkdir -p "$HOME/.gemini/skills"
+          cp -r ai-skills/* "$HOME/.gemini/skills/"
+
+      - name: 'Check Skill Path'
+        run: |
+          echo "HOME=$HOME"
+          ls -la "$HOME"
+
       - name: 'Run Gemini pull request review'
         uses: 'google-github-actions/run-gemini-cli@main' # ratchet:exclude
         id: 'gemini_pr_review'
@@ -91,6 +101,9 @@ jobs:
                   "run_shell_command(head)",
                   "run_shell_command(tail)"
                 ]
+              },
+            "experimental": {
+                "skills": true
               }
             }
           prompt: '/gemini-review'
