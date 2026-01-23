@@ -30,14 +30,13 @@ jobs:
 
       - name: 'Install Gemini skills'
         run: |
-          mkdir -p "$GITHUB_WORKSPACE/.gemini/skills"
-          cp -r ai-skills/* "$GITHUB_WORKSPACE/.gemini/skills/"
+          mkdir -p "$HOME/.gemini/skills"
+          cp -r ai-skills/* "$HOME/.gemini/skills/"
 
       - name: 'Check Skill Path'
         run: |
           echo "HOME=$HOME"
-          echo "WORKSPACE=$GITHUB_WORKSPACE"
-          ls -la "$GITHUB_WORKSPACE"
+          ls -la "$HOME"
 
       - name: 'Run Gemini pull request review'
         uses: 'google-github-actions/run-gemini-cli@main' # ratchet:exclude
