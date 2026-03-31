@@ -526,12 +526,11 @@ public class JsonrpcServiceTest extends BaseTest {
       tronJsonRpc.getStorageAt("", "", "earliest");
       Assert.fail("Expected to be thrown");
     } catch (Exception e) {
-      Assert.assertEquals("TAG [earliest | pending | finalized] not supported",
-          e.getMessage());
+      Assert.assertEquals("invalid storage index", e.getMessage());
     }
 
     try {
-      tronJsonRpc.getStorageAt("", "", "pending");
+      tronJsonRpc.getStorageAt("", "0", "earliest");
       Assert.fail("Expected to be thrown");
     } catch (Exception e) {
       Assert.assertEquals("TAG [earliest | pending | finalized] not supported",
@@ -539,11 +538,35 @@ public class JsonrpcServiceTest extends BaseTest {
     }
 
     try {
-      tronJsonRpc.getStorageAt("", "", "finalized");
+      tronJsonRpc.getStorageAt("", "0", "pending");
       Assert.fail("Expected to be thrown");
     } catch (Exception e) {
       Assert.assertEquals("TAG [earliest | pending | finalized] not supported",
           e.getMessage());
+    }
+
+    try {
+      tronJsonRpc.getStorageAt("", "0", "finalized");
+      Assert.fail("Expected to be thrown");
+    } catch (Exception e) {
+      Assert.assertEquals("TAG [earliest | pending | finalized] not supported",
+          e.getMessage());
+    }
+
+    try {
+      tronJsonRpc.getStorageAt("",
+          "0x00000000000000000000000000000000000000000000000000000000000000000", "latest");
+      Assert.fail("Expected to be thrown");
+    } catch (Exception e) {
+      Assert.assertEquals("invalid storage index", e.getMessage());
+    }
+
+    try {
+      tronJsonRpc.getStorageAt("",
+          "00000000000000000000000000000000000000000000000000000000000000000", "latest");
+      Assert.fail("Expected to be thrown");
+    } catch (Exception e) {
+      Assert.assertEquals("invalid storage index", e.getMessage());
     }
   }
 

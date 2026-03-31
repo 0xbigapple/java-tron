@@ -535,6 +535,12 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
   @Override
   public String getStorageAt(String address, String storageIdx, String blockNumOrTag)
       throws JsonRpcInvalidParamsException {
+    if (StringUtils.isBlank(storageIdx)
+        || "0x".equalsIgnoreCase(storageIdx)
+        || (storageIdx.startsWith("0x") ? storageIdx.length() > 66 : storageIdx.length() > 64)) {
+      throw new JsonRpcInvalidParamsException("invalid storage index");
+    }
+
     if (EARLIEST_STR.equalsIgnoreCase(blockNumOrTag)
         || PENDING_STR.equalsIgnoreCase(blockNumOrTag)
         || FINALIZED_STR.equalsIgnoreCase(blockNumOrTag)) {
