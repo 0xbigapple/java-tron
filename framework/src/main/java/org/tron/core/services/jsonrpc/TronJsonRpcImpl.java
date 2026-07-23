@@ -71,6 +71,7 @@ import org.tron.core.exception.HeaderNotFound;
 import org.tron.core.exception.ItemNotFoundException;
 import org.tron.core.exception.VMIllegalException;
 import org.tron.core.exception.jsonrpc.JsonRpcExceedLimitException;
+import org.tron.core.exception.jsonrpc.JsonRpcExecutionRevertedException;
 import org.tron.core.exception.jsonrpc.JsonRpcInternalException;
 import org.tron.core.exception.jsonrpc.JsonRpcInvalidParamsException;
 import org.tron.core.exception.jsonrpc.JsonRpcInvalidRequestException;
@@ -101,6 +102,7 @@ import org.tron.protos.Protocol.ResourceReceipt;
 import org.tron.protos.Protocol.Transaction;
 import org.tron.protos.Protocol.Transaction.Contract.ContractType;
 import org.tron.protos.Protocol.Transaction.Result.code;
+import org.tron.protos.Protocol.Transaction.Result.contractResult;
 import org.tron.protos.Protocol.TransactionInfo;
 import org.tron.protos.contract.AssetIssueContractOuterClass.TransferAssetContract;
 import org.tron.protos.contract.BalanceContract.TransferContract;
@@ -544,6 +546,25 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
   }
 
   /**
+   * Rejects a failed constant-call execution: throws code 3 with the revert payload in data
+   * for a contract revert, -32000 for any other execution failure.
+   */
+  private void requireExecutionSuccess(TransactionExtention.Builder trxExtBuilder,
+      Return.Builder retBuilder) throws JsonRpcInternalException {
+    Transaction.Result txResult = trxExtBuilder.getTransaction().getRet(0);
+    if (txResult.getRet().equals(code.SUCESS)) {
+      return;
+    }
+    byte[] resData = trxExtBuilder.getConstantResult(0).toByteArray();
+    String errMsg = retBuilder.getMessage().toStringUtf8() + tryDecodeRevertReason(resData);
+    if (txResult.getContractRet() == contractResult.REVERT) {
+      throw new JsonRpcExecutionRevertedException(errMsg, ByteArray.toJsonHex(resData));
+    }
+    throw new JsonRpcInternalException(errMsg,
+        resData.length > 0 ? ByteArray.toJsonHex(resData) : null);
+  }
+
+  /**
    * @param data Hash of the method signature and encoded parameters. for example:
    * getMethodSign(methodName(uint256,uint256)) || data1 || data2
    */
@@ -577,27 +598,14 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
       trxExt = trxExtBuilder.build();
     }
 
-    String result;
-    if (trxExtBuilder.getTransaction().getRet(0).getRet().equals(code.SUCESS)) {
-      List<ByteString> list = trxExt.getConstantResultList();
-      byte[] listBytes = new byte[0];
-      for (ByteString bs : list) {
-        listBytes = ByteUtil.merge(listBytes, bs.toByteArray());
-      }
-      result = ByteArray.toJsonHex(listBytes);
-    } else {
-      byte[] resData = trxExtBuilder.getConstantResult(0).toByteArray();
-      String errMsg = retBuilder.getMessage().toStringUtf8() + tryDecodeRevertReason(resData);
+    requireExecutionSuccess(trxExtBuilder, retBuilder);
 
-      if (resData.length > 0) {
-        throw new JsonRpcInternalException(errMsg, ByteArray.toJsonHex(resData));
-      } else {
-        throw new JsonRpcInternalException(errMsg);
-      }
-
+    List<ByteString> list = trxExt.getConstantResultList();
+    byte[] listBytes = new byte[0];
+    for (ByteString bs : list) {
+      listBytes = ByteUtil.merge(listBytes, bs.toByteArray());
     }
-
-    return result;
+    return ByteArray.toJsonHex(listBytes);
   }
 
   @Override
@@ -730,25 +738,12 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
       throw new JsonRpcInternalException(errString);
     }
 
-    if (trxExtBuilder.getTransaction().getRet(0).getRet().equals(code.FAILED)) {
-      byte[] data = trxExtBuilder.getConstantResult(0).toByteArray();
-      String errMsg = retBuilder.getMessage().toStringUtf8() + tryDecodeRevertReason(data);
+    requireExecutionSuccess(trxExtBuilder, retBuilder);
 
-      if (data.length > 0) {
-        throw new JsonRpcInternalException(errMsg, ByteArray.toJsonHex(data));
-      } else {
-        throw new JsonRpcInternalException(errMsg);
-      }
-
-    } else {
-
-      if (supportEstimateEnergy) {
-        return ByteArray.toJsonHex(estimateBuilder.getEnergyRequired());
-      } else {
-        return ByteArray.toJsonHex(trxExtBuilder.getEnergyUsed());
-      }
-
+    if (supportEstimateEnergy) {
+      return ByteArray.toJsonHex(estimateBuilder.getEnergyRequired());
     }
+    return ByteArray.toJsonHex(trxExtBuilder.getEnergyUsed());
   }
 
   @Override

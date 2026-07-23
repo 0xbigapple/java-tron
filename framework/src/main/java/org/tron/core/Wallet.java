@@ -201,6 +201,7 @@ import org.tron.core.store.MarketPairToPriceStore;
 import org.tron.core.store.StoreFactory;
 import org.tron.core.store.VotesStore;
 import org.tron.core.store.WitnessStore;
+import org.tron.core.utils.ResultCodeUtil;
 import org.tron.core.utils.TransactionUtil;
 import org.tron.core.vm.config.VMConfig;
 import org.tron.core.vm.program.Program;
@@ -236,6 +237,7 @@ import org.tron.protos.Protocol.Transaction;
 import org.tron.protos.Protocol.Transaction.Contract;
 import org.tron.protos.Protocol.Transaction.Contract.ContractType;
 import org.tron.protos.Protocol.Transaction.Result.code;
+import org.tron.protos.Protocol.Transaction.Result.contractResult;
 import org.tron.protos.Protocol.TransactionInfo;
 import org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract;
 import org.tron.protos.contract.BalanceContract;
@@ -3186,12 +3188,15 @@ public class Wallet {
     ret.setStatus(0, code.SUCESS);
     if (StringUtils.isNoneEmpty(result.getRuntimeError())) {
       ret.setStatus(0, code.FAILED);
+      // same failure classification as executed transactions
+      ret.setResultCode(ResultCodeUtil.resolve(result.getException()));
       retBuilder
           .setMessage(ByteString.copyFromUtf8(result.getRuntimeError()))
           .build();
     }
     if (result.isRevert()) {
       ret.setStatus(0, code.FAILED);
+      ret.setResultCode(contractResult.REVERT);
       retBuilder.setMessage(ByteString.copyFromUtf8("REVERT opcode executed"))
           .build();
     }
