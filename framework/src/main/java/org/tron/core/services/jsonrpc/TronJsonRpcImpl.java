@@ -76,6 +76,7 @@ import org.tron.core.exception.jsonrpc.JsonRpcInternalException;
 import org.tron.core.exception.jsonrpc.JsonRpcInvalidParamsException;
 import org.tron.core.exception.jsonrpc.JsonRpcInvalidRequestException;
 import org.tron.core.exception.jsonrpc.JsonRpcMethodNotFoundException;
+import org.tron.core.exception.jsonrpc.JsonRpcPrunedHistoryException;
 import org.tron.core.exception.jsonrpc.JsonRpcTooManyResultException;
 import org.tron.core.services.NodeInfoService;
 import org.tron.core.services.http.JsonFormat;
@@ -351,7 +352,7 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
 
   @Override
   public String ethGetBlockTransactionCountByNumber(String blockNumOrTag)
-      throws JsonRpcInvalidParamsException {
+      throws JsonRpcInvalidParamsException, JsonRpcPrunedHistoryException {
     Block block = getBlockByNumOrTag(blockNumOrTag);
     if (block == null) {
       return null;
@@ -370,7 +371,7 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
 
   @Override
   public BlockResult ethGetBlockByNumber(String blockNumOrTag, Boolean fullTransactionObjects)
-      throws JsonRpcInvalidParamsException {
+      throws JsonRpcInvalidParamsException, JsonRpcPrunedHistoryException {
     final Block b = getBlockByNumOrTag(blockNumOrTag);
     return (b == null ? null : getBlockResult(b, fullTransactionObjects));
   }
@@ -396,16 +397,26 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
     return wallet.getBlockById(ByteString.copyFrom(bHash));
   }
 
-  private Block getBlockByNumOrTag(String blockNumOrTag) throws JsonRpcInvalidParamsException {
+  private Block getBlockByNumOrTag(String blockNumOrTag)
+      throws JsonRpcInvalidParamsException, JsonRpcPrunedHistoryException {
+    long blockNum;
     if (JsonRpcApiUtil.isBlockTag(blockNumOrTag)) {
       if (LATEST_STR.equalsIgnoreCase(blockNumOrTag)) {
         // Return the head block directly from blockStore, bypassing blockIndexStore
         // which may not yet be written when latestBlockHeaderNumber is already updated.
         return wallet.getNowBlock();
       }
-      return wallet.getBlockByNum(JsonRpcApiUtil.parseBlockTag(blockNumOrTag, wallet));
+      blockNum = JsonRpcApiUtil.parseBlockTag(blockNumOrTag, wallet);
+    } else {
+      blockNum = parseBlockNumber(blockNumOrTag);
     }
-    return wallet.getBlockByNum(parseBlockNumber(blockNumOrTag));
+    // Reject a pruned height before touching any store, so a LiteNode pays no lookup for
+    // history it cannot serve. Genesis is exempt: a snapshot copies block 0 explicitly, and
+    // lowestBlockNum is computed from block 1 upwards, so block 0 is always retained.
+    if (blockNum > 0) {
+      JsonRpcApiUtil.checkPrunedHistory(blockNum, wallet);
+    }
+    return wallet.getBlockByNum(blockNum);
   }
 
   private BlockResult getBlockResult(Block block, boolean fullTx) {
@@ -839,7 +850,7 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
 
   @Override
   public TransactionResult getTransactionByBlockNumberAndIndex(String blockNumOrTag, String index)
-      throws JsonRpcInvalidParamsException {
+      throws JsonRpcInvalidParamsException, JsonRpcPrunedHistoryException {
     Block block = getBlockByNumOrTag(blockNumOrTag);
     if (block == null) {
       return null;
@@ -942,13 +953,18 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
 
     BlockCapsule blockCapsule = new BlockCapsule(block);
     long blockNum = blockCapsule.getNum();
+    int transactionSizeInBlock = blockCapsule.getTransactions().size();
+    // an empty block trivially has no receipts; for the rest, below the receipt floor the
+    // body exists but the receipts do not — 4444, not -32000
+    if (transactionSizeInBlock > 0) {
+      JsonRpcApiUtil.checkPrunedReceiptHistory(blockNum, wallet);
+    }
     TransactionInfoList transactionInfoList = wallet.getTransactionInfoByBlockNum(blockNum);
 
     // energy price at the block timestamp
     long energyFee = wallet.getEnergyFee(blockCapsule.getTimeStamp());
 
     // Validate transaction list size consistency
-    int transactionSizeInBlock = blockCapsule.getTransactions().size();
     if (transactionSizeInBlock != transactionInfoList.getTransactionInfoCount()) {
       throw new JsonRpcInternalException(
           String.format("TransactionList size mismatch: "
@@ -1433,7 +1449,8 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
 
   @Override
   public String newFilter(FilterRequest fr) throws JsonRpcInvalidParamsException,
-      JsonRpcMethodNotFoundException, JsonRpcExceedLimitException {
+      JsonRpcMethodNotFoundException, JsonRpcExceedLimitException,
+      JsonRpcPrunedHistoryException {
     disableInPBFT("eth_newFilter");
 
     // not supports finalized as block parameter
@@ -1532,7 +1549,8 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
   @Override
   public LogFilterElement[] getLogs(FilterRequest fr) throws JsonRpcInvalidParamsException,
       ExecutionException, InterruptedException, BadItemException, ItemNotFoundException,
-      JsonRpcMethodNotFoundException, JsonRpcTooManyResultException {
+      JsonRpcMethodNotFoundException, JsonRpcTooManyResultException,
+      JsonRpcPrunedHistoryException {
     disableInPBFT("eth_getLogs");
 
     long currentMaxBlockNum = wallet.getNowBlock().getBlockHeader().getRawData().getNumber();

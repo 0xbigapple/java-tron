@@ -60,6 +60,31 @@ public class TransactionRetStoreTest extends BaseTest {
   }
 
   @Test
+  public void getLowestBlockNum() {
+    Assert.assertEquals(1L, transactionRetStore.getLowestBlockNum().getAsLong());
+  }
+
+  @Test
+  public void getLowestBlockNumPicksMinimumKey() {
+    transactionRetStore.put(ByteArray.fromLong(7), transactionRetCapsule);
+    transactionRetStore.put(ByteArray.fromLong(3), transactionRetCapsule);
+    try {
+      Assert.assertEquals(1L, transactionRetStore.getLowestBlockNum().getAsLong());
+      transactionRetStore.delete(blockNum);
+      Assert.assertEquals(3L, transactionRetStore.getLowestBlockNum().getAsLong());
+    } finally {
+      transactionRetStore.delete(ByteArray.fromLong(3));
+      transactionRetStore.delete(ByteArray.fromLong(7));
+    }
+  }
+
+  @Test
+  public void getLowestBlockNumOnEmptyStore() {
+    transactionRetStore.delete(blockNum);
+    Assert.assertFalse(transactionRetStore.getLowestBlockNum().isPresent());
+  }
+
+  @Test
   public void get() throws BadItemException {
     TransactionInfoCapsule resultCapsule = transactionRetStore.getTransactionInfo(transactionId);
     Assert.assertNotNull("get transaction ret store", resultCapsule);

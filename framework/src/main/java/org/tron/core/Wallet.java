@@ -739,6 +739,18 @@ public class Wallet {
     return chainBaseManager.getHeadBlockNum();
   }
 
+  public boolean isLiteNode() {
+    return chainBaseManager.isLiteNode();
+  }
+
+  public long getLowestBlockNum() {
+    return chainBaseManager.getLowestBlockNum();
+  }
+
+  public long getLowestReceiptBlockNum() {
+    return chainBaseManager.getLowestReceiptBlockNum();
+  }
+
   public BlockCapsule getBlockCapsuleByNum(long blockNum) {
     try {
       return chainBaseManager.getBlockByNum(blockNum);

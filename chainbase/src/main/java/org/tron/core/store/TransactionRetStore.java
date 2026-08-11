@@ -1,7 +1,10 @@
 package org.tron.core.store;
 
+import com.google.common.primitives.Longs;
 import com.google.protobuf.ByteString;
+import java.util.Map;
 import java.util.Objects;
+import java.util.OptionalLong;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.BooleanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -35,6 +38,23 @@ public class TransactionRetStore extends TronStoreWithRevoking<TransactionRetCap
         .getStorage().getTransactionHistorySwitch())) {
       super.put(key, item);
     }
+  }
+
+  /**
+   * Lowest block number that has receipts, or empty when the store has none. On a LiteNode
+   * this is generally above the block floor: a snapshot ships block bodies but no receipts.
+   *
+   * <p>Startup probe only — must run before any session is built. With in-flight snapshot
+   * layers, {@code getNext} does not merge deletions correctly.
+   */
+  public OptionalLong getLowestBlockNum() {
+    Map<byte[], byte[]> entries = revokingDB.getNext(ByteArray.fromLong(0), 1);
+    for (byte[] key : entries.keySet()) {
+      if (key.length == Long.BYTES) {
+        return OptionalLong.of(Longs.fromByteArray(key));
+      }
+    }
+    return OptionalLong.empty();
   }
 
   public TransactionInfoCapsule getTransactionInfo(byte[] key) throws BadItemException {
