@@ -159,11 +159,19 @@ public class Args extends CommonParameter {
       Args.printHelp(jc);
       exit(0);
     }
-    if (cmd.keystoreFactory) {
+    // Check assignment, not the field value: JCommander toggles arity-0 booleans
+    // per occurrence, so a repeated flag parses back to false.
+    boolean keystoreFactoryPassed = jc.getParameters().stream()
+        .filter(pd -> "--keystore-factory".equals(pd.getLongestName()))
+        .anyMatch(ParameterDescription::isAssigned);
+    if (keystoreFactoryPassed) {
+      // stderr, not logger: the default logback config has no console appender
       System.err.println("--keystore-factory was removed.");
       System.err.println("Use: java -jar Toolkit.jar keystore <new|import|list|update>");
-      System.err.println("SM2 nodes (crypto.engine = 'sm2'): append --sm2 to keystore commands.");
-      exit(1);
+      System.err.println("SM2 nodes (crypto.engine = 'sm2'): append --sm2 to commands that create "
+          + "or modify a keystore.");
+      throw new TronError("--keystore-factory was removed; use Toolkit.jar keystore",
+          TronError.ErrCode.PARAMETER_INIT);
     }
 
     // Resolve config file path
