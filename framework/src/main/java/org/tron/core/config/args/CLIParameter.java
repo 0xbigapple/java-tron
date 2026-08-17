@@ -50,7 +50,8 @@ public class CLIParameter {
   @Parameter(names = {"--solidity"}, description = "running a solidity node for java tron")
   public boolean solidityNode;
 
-  @Parameter(names = {"--keystore-factory"}, description = "running KeystoreFactory")
+  @Deprecated
+  @Parameter(names = {"--keystore-factory"}, description = "removed; use Toolkit.jar keystore")
   public boolean keystoreFactory;
 
   @Deprecated

@@ -50,7 +50,7 @@ public class ArgsTest {
 
   @Test
   public void get() {
-    Args.setParam(new String[] {"--keystore-factory"}, TestConstants.TEST_CONF);
+    Args.setParam(new String[] {}, TestConstants.TEST_CONF);
 
     CommonParameter parameter = Args.getInstance();
 
@@ -122,8 +122,6 @@ public class ArgsTest {
     Assert.assertEquals(address,
         ByteArray.toHexString(Args.getLocalWitnesses()
             .getWitnessAccountAddress()));
-
-    Assert.assertTrue(parameter.isKeystoreFactory());
   }
 
   @Test
