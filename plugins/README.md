@@ -220,6 +220,6 @@ When using `--password-file` with `update`, the file must contain exactly two li
 - `--password-file`: Read password from a file instead of interactive prompt. For `keystore update`, the file must contain exactly two lines (current password, then new password).
 - `--key-file`: Read the private key (hex, with or without `0x` prefix) from a file instead of the interactive prompt (`keystore import` only).
 - `--force`: For `keystore import`, allow importing a private key whose address already has a keystore in the directory (creates an additional file).
-- `--sm2`: Use SM2 algorithm instead of ECDSA (for `new` and `import`).
+- `--sm2`: Use SM2 algorithm instead of ECDSA (for `new`, `import` and `update`).
 - `--json`: Output in JSON format for scripting.
 - `-h | --help`: Provide the help info.
