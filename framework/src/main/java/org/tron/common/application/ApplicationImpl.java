@@ -1,5 +1,6 @@
 package org.tron.common.application;
 
+import java.io.IOException;
 import java.util.concurrent.CountDownLatch;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -10,6 +11,7 @@ import org.tron.core.consensus.ConsensusService;
 import org.tron.core.db.Manager;
 import org.tron.core.net.TronNetService;
 import org.tron.core.services.event.EventService;
+import org.tron.core.services.jsonrpc.TronJsonRpcImpl;
 import org.tron.program.SolidityNode;
 
 @Slf4j(topic = "app")
@@ -37,6 +39,9 @@ public class ApplicationImpl implements Application {
   @Autowired(required = false)
   private SolidityNode solidityNode;
 
+  @Autowired
+  private TronJsonRpcImpl tronJsonRpc;
+
   private final CountDownLatch shutdown = new CountDownLatch(1);
 
   /**
@@ -61,6 +66,13 @@ public class ApplicationImpl implements Application {
     eventService.close();
     if (solidityNode != null) {
       solidityNode.close();
+    }
+    // producers are stopped; stop the json-rpc filter consumer before the DB closes
+    // (idempotent — Spring bean destruction may call close() again)
+    try {
+      tronJsonRpc.close();
+    } catch (IOException e) {
+      logger.warn("Closing TronJsonRpcImpl failed.", e);
     }
     dbManager.close();
     shutdown.countDown();
