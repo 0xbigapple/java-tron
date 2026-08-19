@@ -1,6 +1,5 @@
 package org.tron.common.application;
 
-import java.io.IOException;
 import java.util.concurrent.CountDownLatch;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -71,7 +70,7 @@ public class ApplicationImpl implements Application {
     // (idempotent — Spring bean destruction may call close() again)
     try {
       tronJsonRpc.close();
-    } catch (IOException e) {
+    } catch (Exception e) {
       logger.warn("Closing TronJsonRpcImpl failed.", e);
     }
     dbManager.close();

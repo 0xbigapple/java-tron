@@ -236,6 +236,7 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
       } catch (InterruptedException e) {
         logger.error("FilterProcessLoop get InterruptedException, error is {}.", e.getMessage());
         Thread.currentThread().interrupt();
+        return;
       } catch (Throwable throwable) {
         logger.error("Unknown throwable happened in filterProcessLoop. ", throwable);
       }
