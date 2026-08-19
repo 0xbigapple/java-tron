@@ -1,5 +1,6 @@
 package org.tron.common.logsfilter.queue;
 
+import com.google.common.annotations.VisibleForTesting;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -24,14 +25,7 @@ public class FilterCapsuleQueue {
     return queue.poll(timeout, unit);
   }
 
-  public int size() {
-    return queue.size();
-  }
-
-  public void clear() {
-    queue.clear();
-  }
-
+  @VisibleForTesting
   public Stream<FilterTriggerCapsule> stream() {
     return queue.stream();
   }

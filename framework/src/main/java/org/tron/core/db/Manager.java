@@ -2304,9 +2304,7 @@ public class Manager {
   private void postBlockFilter(final BlockCapsule blockCapsule, boolean solidified) {
     BlockFilterCapsule blockFilterCapsule =
         new BlockFilterCapsule(blockCapsule, solidified);
-    if (!filterCapsuleQueue.offer(blockFilterCapsule)) {
-      logger.info("Too many filters, block filter lost: {}.", blockCapsule.getBlockId());
-    }
+    filterCapsuleQueue.offer(blockFilterCapsule);
   }
 
   private void postLogsFilter(final BlockCapsule blockCapsule, boolean solidified,
@@ -2319,9 +2317,7 @@ public class Manager {
           blockCapsule.getBlockId().toString(), blockCapsule.getBloom(), transactionInfoList,
           solidified, removed);
 
-      if (!filterCapsuleQueue.offer(logsFilterCapsule)) {
-        logger.info("Too many filters, logs filter lost: {}.", blockNumber);
-      }
+      filterCapsuleQueue.offer(logsFilterCapsule);
     }
   }
 

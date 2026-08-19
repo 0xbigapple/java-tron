@@ -1734,7 +1734,6 @@ public class ManagerTest extends BaseMethodTest {
 
     long expiration = t + 1_000_000L;
     FilterCapsuleQueue queue = context.getBean(FilterCapsuleQueue.class);
-    queue.clear();
 
     // old branch: A carries a transfer; applied via the normal extend path
     BlockCapsule a = blockWithTransfer(t + 6000, base + 2, p.getBlockId().getByteString(), keys,
