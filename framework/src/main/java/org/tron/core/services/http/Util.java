@@ -25,6 +25,7 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.bouncycastle.util.encoders.DecoderException;
 import org.bouncycastle.util.encoders.Hex;
 import org.eclipse.jetty.http.HttpMethod;
 import org.eclipse.jetty.http.MimeTypes;
@@ -41,6 +42,7 @@ import org.tron.api.GrpcAPI.TransactionSignWeight;
 import org.tron.common.crypto.Hash;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.ByteArray;
+import org.tron.common.utils.DecodeUtil;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.Constant;
 import org.tron.core.actuator.TransactionFactory;
@@ -72,6 +74,9 @@ public class Util {
   private static final String INVALID_PERMISSION_ID =
       "invalid " + PERMISSION_ID + ": expect a 32-bit integer";
   private static final int MAX_JSON_INTEGER_VALUE_LENGTH = 64;
+  private static final int BODY_READ_BUFFER_SIZE = 4096;
+  private static final String INVALID_ADDRESS = "INVALID address";
+  private static final String INVALID_JSON_BODY = "INVALID JSON body";
   public static final String VISIBLE = "visible";
   public static final String INT64_AS_STRING_PARAM = "int64_as_string";
   public static final String TRANSACTION = "transaction";
@@ -574,6 +579,16 @@ public class Util {
     }
   }
 
+  static void writeError(HttpServletResponse response, String message) {
+    JSONObject error = new JSONObject();
+    error.put("Error", message);
+    try {
+      response.getWriter().println(error.toJSONString());
+    } catch (IOException ioe) {
+      logger.debug("IOException: {}", ioe.getMessage());
+    }
+  }
+
   public static String convertOutput(Account account) {
     if (account.getAssetIssuedID().isEmpty()) {
       return JsonFormat.printToString(account, false);
@@ -599,16 +614,43 @@ public class Util {
     }
   }
 
+  /**
+   * Returns the address the request carries. Every way the request can fail to name one is
+   * reported as an IllegalArgumentException whose message is the fixed text the caller is
+   * answered with, so that the address-keyed endpoints and their solidity/PBFT mirrors answer a
+   * given malformed request identically without each having to classify the failure. Nothing
+   * derived from the request may go into that message: it is written straight to the response.
+   */
   public static byte[] getAddress(HttpServletRequest request) throws Exception {
-    byte[] address = null;
     String addressParam = "address";
-    String addressStr = checkGetParam(request, addressParam);
-    if (StringUtils.isNotBlank(addressStr)) {
-      if (StringUtils.startsWith(addressStr, Constant.ADD_PRE_FIX_STRING_MAINNET)) {
-        address = Hex.decode(addressStr);
-      } else {
-        address = decodeFromBase58Check(addressStr);
-      }
+    String addressStr;
+    try {
+      addressStr = checkGetParam(request, addressParam);
+    } catch (JSONException e) {
+      throw new IllegalArgumentException(INVALID_JSON_BODY);
+    } catch (IllegalArgumentException e) {
+      throw new IllegalArgumentException(INVALID_ADDRESS);
+    }
+    if (StringUtils.isBlank(addressStr)) {
+      throw new IllegalArgumentException(INVALID_ADDRESS);
+    }
+
+    boolean hex = StringUtils.startsWith(addressStr, Constant.ADD_PRE_FIX_STRING_MAINNET);
+    // bound the hex input before decoding, mirroring the base58 length short-circuit
+    if (hex && addressStr.length() != DecodeUtil.ADDRESS_SIZE) {
+      throw new IllegalArgumentException(INVALID_ADDRESS);
+    }
+
+    byte[] address;
+    try {
+      address = hex ? Hex.decode(addressStr) : decodeFromBase58Check(addressStr);
+    } catch (DecoderException | IllegalArgumentException exception) {
+      // both decoders name the offending character and its offset, which is caller input
+      throw new IllegalArgumentException(INVALID_ADDRESS);
+    }
+    // base58 is validated inside the decoder; hex used to be returned unchecked
+    if (address == null || (hex && !DecodeUtil.addressValid(address))) {
+      throw new IllegalArgumentException(INVALID_ADDRESS);
     }
     return address;
   }
@@ -642,14 +684,24 @@ public class Util {
     return null;
   }
 
-  public static String getRequestValue(HttpServletRequest request) throws IOException {
-    BufferedReader reader = new BufferedReader(new InputStreamReader(request.getInputStream()));
-    String line;
+  /**
+   * Reads the request body. This is the only body-reading path in the http layer that does not go
+   * through {@link PostParams}, so the {@link #checkBodySize} every other path performs is applied
+   * here as well.
+   */
+  public static String getRequestValue(HttpServletRequest request) throws Exception {
     StringBuilder sb = new StringBuilder();
-    while ((line = reader.readLine()) != null) {
-      sb.append(line);
+    char[] buffer = new char[BODY_READ_BUFFER_SIZE];
+    try (BufferedReader reader = new BufferedReader(
+        new InputStreamReader(request.getInputStream()))) {
+      int read;
+      while ((read = reader.read(buffer)) != -1) {
+        sb.append(buffer, 0, read);
+      }
     }
-    return sb.toString();
+    String value = sb.toString();
+    checkBodySize(value);
+    return value;
   }
 
   public static List<Log> convertLogAddressToTronAddress(TransactionInfo transactionInfo) {
