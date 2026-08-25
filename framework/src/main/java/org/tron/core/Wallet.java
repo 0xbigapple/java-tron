@@ -3201,6 +3201,9 @@ public class Wallet {
 
   public SmartContract getContract(GrpcAPI.BytesMessage bytesMessage) {
     byte[] address = bytesMessage.getValue().toByteArray();
+    if (!DecodeUtil.addressValid(address)) {
+      return null;
+    }
     AccountCapsule accountCapsule = chainBaseManager.getAccountStore().get(address);
     if (accountCapsule == null) {
       logger.warn(
@@ -3230,6 +3233,9 @@ public class Wallet {
    */
   public SmartContractDataWrapper getContractInfo(GrpcAPI.BytesMessage bytesMessage) {
     byte[] address = bytesMessage.getValue().toByteArray();
+    if (!DecodeUtil.addressValid(address)) {
+      return null;
+    }
     AccountCapsule accountCapsule = chainBaseManager.getAccountStore().get(address);
     if (accountCapsule == null) {
       logger.warn(
