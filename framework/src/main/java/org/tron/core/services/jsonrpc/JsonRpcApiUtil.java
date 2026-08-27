@@ -715,33 +715,34 @@ public class JsonRpcApiUtil {
   public static void checkPrunedHistory(long blockNum, Wallet wallet)
       throws JsonRpcPrunedHistoryException {
     if (wallet.isLiteNode() && blockNum < wallet.getLowestBlockNum()) {
-      throw new JsonRpcPrunedHistoryException(prunedMessage(wallet.getLowestBlockNum()));
+      throw prunedHistory(wallet.getLowestBlockNum());
     }
   }
 
   /**
    * Receipt form of {@link #checkPrunedHistory(long, Wallet)} for endpoints that read
    * receipts or logs; their floor is the first block with receipts. Same raw-primitive
-   * contract.
+   * contract. Receipt persistence is a per-node switch independent of node type, so a node
+   * that never persists receipts is rejected before the LiteNode gate.
    */
   public static void checkPrunedReceiptHistory(long blockNum, Wallet wallet)
       throws JsonRpcPrunedHistoryException {
-    if (!wallet.isLiteNode()) {
-      return;
-    }
     long receiptFloor = wallet.getLowestReceiptBlockNum();
     if (receiptFloor == Long.MAX_VALUE) {
-      throw new JsonRpcPrunedHistoryException(
-          PRUNED_HISTORY_ERROR + ": transaction history is not persisted on this node");
+      throw new JsonRpcPrunedHistoryException(PRUNED_HISTORY_ERROR);
     }
-    if (blockNum < receiptFloor) {
-      throw new JsonRpcPrunedHistoryException(prunedMessage(receiptFloor));
+    if (wallet.isLiteNode() && blockNum < receiptFloor) {
+      throw prunedHistory(receiptFloor);
     }
   }
 
-  private static String prunedMessage(long earliestAvailable) {
-    return PRUNED_HISTORY_ERROR + ": earliest available block is 0x"
-        + Long.toHexString(earliestAvailable);
+  /**
+   * The Execution API fixes the message verbatim; the earliest available block travels in
+   * {@code data} so a client can pick a fallback node from it.
+   */
+  private static JsonRpcPrunedHistoryException prunedHistory(long earliestAvailable) {
+    return new JsonRpcPrunedHistoryException(PRUNED_HISTORY_ERROR,
+        "0x" + Long.toHexString(earliestAvailable));
   }
 
   /**

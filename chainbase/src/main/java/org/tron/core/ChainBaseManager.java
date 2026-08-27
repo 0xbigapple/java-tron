@@ -401,16 +401,22 @@ public class ChainBaseManager {
     this.lowestBlockNum = this.blockIndexStore.getLimitNumber(1, 1).stream()
             .map(BlockId::getNum).findFirst().orElse(0L);
     this.nodeType = getLowestBlockNum() > 1 ? NodeType.LITE : NodeType.FULL;
-    // Probed from the store itself, not from snapshot metadata; empty store falls back to
-    // the head. This runs before checkpoint recovery, so the very first session can be one
-    // block conservative; restarts self-correct. With receipt persistence off the store
-    // never grows, so no floor exists — receipt history is simply unavailable.
+    this.latestSaveBlockTime = System.currentTimeMillis();
+  }
+
+  /**
+   * Probes the receipt floor from the store itself, not from snapshot metadata; an empty
+   * store means receipts begin with the next executed block. With receipt persistence off
+   * the store never grows, so no floor exists. Must run after checkpoint recovery (so the
+   * last session's tail is visible) and before any session is built ({@code getNext} does
+   * not merge in-flight layers).
+   */
+  public void probeLowestReceiptBlockNum() {
     boolean persistReceipts = BooleanUtils.toBoolean(CommonParameter.getInstance()
         .getStorage().getTransactionHistorySwitch());
     this.lowestReceiptBlockNum = persistReceipts
         ? this.transactionRetStore.getLowestBlockNum().orElseGet(() -> getHeadBlockNum() + 1)
         : Long.MAX_VALUE;
-    this.latestSaveBlockTime = System.currentTimeMillis();
   }
 
   public void shutdown() {

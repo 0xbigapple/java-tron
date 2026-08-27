@@ -10,4 +10,8 @@ public class JsonRpcPrunedHistoryException extends JsonRpcInternalException {
   public JsonRpcPrunedHistoryException(String message) {
     super(message);
   }
+
+  public JsonRpcPrunedHistoryException(String message, Object data) {
+    super(message, data);
+  }
 }
