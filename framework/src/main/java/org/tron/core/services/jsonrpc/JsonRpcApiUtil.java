@@ -24,6 +24,7 @@ import org.tron.common.utils.Sha256Hash;
 import org.tron.common.utils.StringUtil;
 import org.tron.core.Wallet;
 import org.tron.core.exception.jsonrpc.JsonRpcInvalidParamsException;
+import org.tron.core.exception.jsonrpc.JsonRpcPrunedHistoryException;
 import org.tron.protos.Protocol.Block;
 import org.tron.protos.Protocol.Transaction;
 import org.tron.protos.Protocol.Transaction.Contract.ContractType;
@@ -62,6 +63,7 @@ public class JsonRpcApiUtil {
   public static final String TAG_PENDING_SUPPORT_ERROR = "TAG pending not supported";
   public static final String TAG_SAFE_SUPPORT_ERROR = "TAG safe not supported";
   public static final String BLOCK_NUM_ERROR = "invalid block number";
+  public static final String PRUNED_HISTORY_ERROR = "Pruned history unavailable";
   public static final String TX_INDEX_ERROR = "invalid index value";
 
   private static final SecureRandom random = new SecureRandom();
@@ -636,7 +638,14 @@ public class JsonRpcApiUtil {
       return wallet.getHeadBlockNum();
     }
     if (EARLIEST_STR.equalsIgnoreCase(tag)) {
-      return 0;
+      if (!wallet.isLiteNode()) {
+        return 0;
+      }
+      // "earliest" is the lowest block for which everything the node persists is available:
+      // the receipt floor when receipts are persisted, otherwise the body floor (receipt
+      // endpoints answer 4444 on such a node regardless of this value)
+      long receiptFloor = wallet.getLowestReceiptBlockNum();
+      return receiptFloor == Long.MAX_VALUE ? wallet.getLowestBlockNum() : receiptFloor;
     }
     if (FINALIZED_STR.equalsIgnoreCase(tag)) {
       return wallet.getSolidBlockNum();
@@ -698,6 +707,43 @@ public class JsonRpcApiUtil {
       throw new JsonRpcInvalidParamsException("Incorrect hex syntax");
     }
     return parseBlockNumber(blockNumOrTag);
+  }
+
+  /**
+   * Rejects a query for a block below the LiteNode pruning cutoff with error code 4444.
+   * Raw primitive — no genesis exemption; callers own that semantics.
+   */
+  public static void checkPrunedHistory(long blockNum, Wallet wallet)
+      throws JsonRpcPrunedHistoryException {
+    if (wallet.isLiteNode() && blockNum < wallet.getLowestBlockNum()) {
+      throw prunedHistory(wallet.getLowestBlockNum());
+    }
+  }
+
+  /**
+   * Receipt form of {@link #checkPrunedHistory(long, Wallet)} for endpoints that read
+   * receipts or logs; their floor is the first block with receipts. Same raw-primitive
+   * contract. Receipt persistence is a per-node switch independent of node type, so a node
+   * that never persists receipts is rejected before the LiteNode gate.
+   */
+  public static void checkPrunedReceiptHistory(long blockNum, Wallet wallet)
+      throws JsonRpcPrunedHistoryException {
+    long receiptFloor = wallet.getLowestReceiptBlockNum();
+    if (receiptFloor == Long.MAX_VALUE) {
+      throw new JsonRpcPrunedHistoryException(PRUNED_HISTORY_ERROR);
+    }
+    if (wallet.isLiteNode() && blockNum < receiptFloor) {
+      throw prunedHistory(receiptFloor);
+    }
+  }
+
+  /**
+   * The Execution API fixes the message verbatim; the earliest available block travels in
+   * {@code data} so a client can pick a fallback node from it.
+   */
+  private static JsonRpcPrunedHistoryException prunedHistory(long earliestAvailable) {
+    return new JsonRpcPrunedHistoryException(PRUNED_HISTORY_ERROR,
+        "0x" + Long.toHexString(earliestAvailable));
   }
 
   /**

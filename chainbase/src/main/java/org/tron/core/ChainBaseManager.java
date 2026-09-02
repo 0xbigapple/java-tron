@@ -9,8 +9,10 @@ import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.lang3.BooleanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import org.tron.common.parameter.CommonParameter;
 import org.tron.common.storage.metric.DbStatService;
 import org.tron.common.utils.ForkController;
 import org.tron.common.utils.Sha256Hash;
@@ -244,6 +246,11 @@ public class ChainBaseManager {
   @Setter
   private long lowestBlockNum = -1; // except num = 0.
 
+  // lowest block with receipts; above lowestBlockNum on a LiteNode
+  @Getter
+  @Setter
+  private long lowestReceiptBlockNum = -1;
+
   @Getter
   @Setter
   private long latestSaveBlockTime;
@@ -395,6 +402,21 @@ public class ChainBaseManager {
             .map(BlockId::getNum).findFirst().orElse(0L);
     this.nodeType = getLowestBlockNum() > 1 ? NodeType.LITE : NodeType.FULL;
     this.latestSaveBlockTime = System.currentTimeMillis();
+  }
+
+  /**
+   * Probes the receipt floor from the store itself, not from snapshot metadata; an empty
+   * store means receipts begin with the next executed block. With receipt persistence off
+   * the store never grows, so no floor exists. Must run after checkpoint recovery (so the
+   * last session's tail is visible) and before any session is built ({@code getNext} does
+   * not merge in-flight layers).
+   */
+  public void probeLowestReceiptBlockNum() {
+    boolean persistReceipts = BooleanUtils.toBoolean(CommonParameter.getInstance()
+        .getStorage().getTransactionHistorySwitch());
+    this.lowestReceiptBlockNum = persistReceipts
+        ? this.transactionRetStore.getLowestBlockNum().orElseGet(() -> getHeadBlockNum() + 1)
+        : Long.MAX_VALUE;
   }
 
   public void shutdown() {
