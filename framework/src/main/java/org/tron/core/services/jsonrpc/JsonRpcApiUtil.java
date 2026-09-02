@@ -641,8 +641,9 @@ public class JsonRpcApiUtil {
       if (!wallet.isLiteNode()) {
         return 0;
       }
-      // "earliest" anchors to the receipt floor (first block with complete data); with
-      // receipt persistence off no such block exists — fall back to the body floor
+      // "earliest" is the lowest block for which everything the node persists is available:
+      // the receipt floor when receipts are persisted, otherwise the body floor (receipt
+      // endpoints answer 4444 on such a node regardless of this value)
       long receiptFloor = wallet.getLowestReceiptBlockNum();
       return receiptFloor == Long.MAX_VALUE ? wallet.getLowestBlockNum() : receiptFloor;
     }
