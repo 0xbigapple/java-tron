@@ -129,7 +129,8 @@ public interface TronJsonRpc {
       @JsonRpcError(exception = JsonRpcInternalException.class, code = -32000, data = "{}"),
   })
   String estimateGas(CallArguments args) throws JsonRpcInvalidRequestException,
-      JsonRpcInvalidParamsException, JsonRpcInternalException;
+      JsonRpcInvalidParamsException, JsonRpcInternalException,
+      JsonRpcExecutionRevertedException;
 
   @JsonRpcMethod("eth_getTransactionByHash")
   @JsonRpcErrors({
@@ -165,7 +166,8 @@ public interface TronJsonRpc {
       @JsonRpcError(exception = JsonRpcInternalException.class, code = -32000, data = "{}")
   })
   List<TransactionReceipt> getBlockReceipts(String blockNumOrHashOrTag)
-      throws JsonRpcInvalidParamsException, JsonRpcInternalException;
+      throws JsonRpcInvalidParamsException, JsonRpcInternalException,
+      JsonRpcPrunedHistoryException;
 
   @JsonRpcMethod("eth_call")
   @JsonRpcErrors({
@@ -176,7 +178,7 @@ public interface TronJsonRpc {
   })
   String getCall(CallArguments transactionCall, Object blockNumOrTag)
       throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
-      JsonRpcInternalException;
+      JsonRpcInternalException, JsonRpcExecutionRevertedException;
 
   @JsonRpcMethod("net_peerCount")
   String getPeerCount();

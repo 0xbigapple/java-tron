@@ -1,6 +1,6 @@
 package org.tron.core.exception.jsonrpc;
 
-public class JsonRpcExecutionRevertedException extends JsonRpcInternalException {
+public class JsonRpcExecutionRevertedException extends JsonRpcException {
 
   public JsonRpcExecutionRevertedException(String message) {
     super(message);

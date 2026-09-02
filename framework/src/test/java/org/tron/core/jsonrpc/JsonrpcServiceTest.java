@@ -1376,28 +1376,28 @@ public class JsonrpcServiceTest extends BaseTest {
         Assert.assertEquals(ByteArray.toJsonHex(blockCapsule1.getTimeStamp() / 1000),
             transactionReceipt1.getLogs()[0].getBlockTimestamp());
       }
-    } catch (JsonRpcInvalidParamsException | JsonRpcInternalException e) {
+    } catch (JsonRpcException e) {
       throw new RuntimeException(e);
     }
 
     try {
       List<TransactionReceipt> transactionReceiptList = tronJsonRpc.getBlockReceipts("earliest");
       Assert.assertNull(transactionReceiptList);
-    } catch (JsonRpcInvalidParamsException | JsonRpcInternalException e) {
+    } catch (JsonRpcException e) {
       throw new RuntimeException(e);
     }
 
     try {
       List<TransactionReceipt> transactionReceiptList = tronJsonRpc.getBlockReceipts("latest");
       Assert.assertFalse(transactionReceiptList.isEmpty());
-    } catch (JsonRpcInvalidParamsException | JsonRpcInternalException e) {
+    } catch (JsonRpcException e) {
       throw new RuntimeException(e);
     }
 
     try {
       List<TransactionReceipt> transactionReceiptList = tronJsonRpc.getBlockReceipts("finalized");
       Assert.assertFalse(transactionReceiptList.isEmpty());
-    } catch (JsonRpcInvalidParamsException | JsonRpcInternalException e) {
+    } catch (JsonRpcException e) {
       throw new RuntimeException(e);
     }
 
@@ -1416,7 +1416,7 @@ public class JsonrpcServiceTest extends BaseTest {
     try {
       List<TransactionReceipt> transactionReceiptList = tronJsonRpc.getBlockReceipts("0x2");
       Assert.assertNull(transactionReceiptList);
-    } catch (JsonRpcInvalidParamsException | JsonRpcInternalException e) {
+    } catch (JsonRpcException e) {
       throw new RuntimeException(e);
     }
 
@@ -1430,7 +1430,7 @@ public class JsonrpcServiceTest extends BaseTest {
       Assert.assertFalse(transactionReceiptList.isEmpty());
       Assert.assertEquals(JSON.toJSONString(transactionReceiptList),
           JSON.toJSONString(transactionReceiptList2));
-    } catch (JsonRpcInvalidParamsException | JsonRpcInternalException e) {
+    } catch (JsonRpcException e) {
       throw new RuntimeException(e);
     }
 

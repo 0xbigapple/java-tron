@@ -561,7 +561,8 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
    * for a contract revert, -32000 for any other execution failure.
    */
   private void requireExecutionSuccess(TransactionExtention.Builder trxExtBuilder,
-      Return.Builder retBuilder) throws JsonRpcInternalException {
+      Return.Builder retBuilder)
+      throws JsonRpcInternalException, JsonRpcExecutionRevertedException {
     Transaction.Result txResult = trxExtBuilder.getTransaction().getRet(0);
     if (txResult.getRet().equals(code.SUCESS)) {
       return;
@@ -580,7 +581,8 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
    * getMethodSign(methodName(uint256,uint256)) || data1 || data2
    */
   private String call(byte[] ownerAddressByte, byte[] contractAddressByte, long value,
-      byte[] data) throws JsonRpcInvalidRequestException, JsonRpcInternalException {
+      byte[] data) throws JsonRpcInvalidRequestException, JsonRpcInternalException,
+      JsonRpcExecutionRevertedException {
 
     TransactionExtention.Builder trxExtBuilder = TransactionExtention.newBuilder();
     Return.Builder retBuilder = Return.newBuilder();
@@ -691,7 +693,8 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
 
   @Override
   public String estimateGas(CallArguments args) throws JsonRpcInvalidRequestException,
-      JsonRpcInvalidParamsException, JsonRpcInternalException {
+      JsonRpcInvalidParamsException, JsonRpcInternalException,
+      JsonRpcExecutionRevertedException {
     byte[] ownerAddress = addressCompatibleToByteArray(args.getFrom());
 
     ContractType contractType = args.getContractType(wallet);
@@ -935,7 +938,8 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
    */
   @Override
   public List<TransactionReceipt> getBlockReceipts(String blockNumOrHashOrTag)
-      throws JsonRpcInvalidParamsException, JsonRpcInternalException {
+      throws JsonRpcInvalidParamsException, JsonRpcInternalException,
+      JsonRpcPrunedHistoryException {
 
     Block block = null;
 
@@ -1011,7 +1015,7 @@ public class TronJsonRpcImpl implements TronJsonRpc, Closeable {
   @Override
   public String getCall(CallArguments transactionCall, Object blockParamObj)
       throws JsonRpcInvalidParamsException, JsonRpcInvalidRequestException,
-      JsonRpcInternalException {
+      JsonRpcInternalException, JsonRpcExecutionRevertedException {
 
     String blockNumOrTag;
     if (blockParamObj instanceof HashMap) {

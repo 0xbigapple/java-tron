@@ -164,7 +164,6 @@ public class JsonRpcCallAndEstimateGasTest {
 
     JsonRpcInternalException e = assertThrows(JsonRpcInternalException.class,
         () -> mockRpc.getCall(newCallArgs(), "latest"));
-    Assert.assertFalse(e instanceof JsonRpcExecutionRevertedException);
     Assert.assertEquals("Out of energy", e.getMessage());
     Assert.assertNull(e.getData());
   }
@@ -177,7 +176,6 @@ public class JsonRpcCallAndEstimateGasTest {
 
     JsonRpcInternalException e = assertThrows(JsonRpcInternalException.class,
         () -> mockRpc.getCall(newCallArgs(), "latest"));
-    Assert.assertFalse(e instanceof JsonRpcExecutionRevertedException);
     Assert.assertEquals("Unknown failure", e.getMessage());
     Assert.assertEquals("0xdeadbeef00", e.getData());
   }
