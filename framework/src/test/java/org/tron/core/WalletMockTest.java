@@ -907,6 +907,7 @@ public class WalletMockTest {
     GrpcAPI.ShieldedTRC20Parameters shieldedTRC20Parameters =
         GrpcAPI.ShieldedTRC20Parameters.newBuilder()
             .addSpendDescription(spendDescription)
+            .addReceiveDescription(ShieldContract.ReceiveDescription.getDefaultInstance())
             .setParameterType("transfer")
             .build();
     GrpcAPI.BytesMessage bytesMessage =
@@ -1399,8 +1400,10 @@ public class WalletMockTest {
   @Test
   public void testGetContractInfo() throws Exception {
     Wallet wallet = new Wallet();
+    byte[] address = new byte[21];
+    address[0] = Wallet.getAddressPreFixByte();
     GrpcAPI.BytesMessage bytesMessage = GrpcAPI.BytesMessage.newBuilder()
-        .setValue(ByteString.copyFrom("test".getBytes()))
+        .setValue(ByteString.copyFrom(address))
         .build();
 
     ChainBaseManager chainBaseManagerMock = mock(ChainBaseManager.class);
@@ -1419,8 +1422,10 @@ public class WalletMockTest {
   @Test
   public void testGetContractInfo1() throws Exception {
     Wallet wallet = new Wallet();
+    byte[] address = new byte[21];
+    address[0] = Wallet.getAddressPreFixByte();
     GrpcAPI.BytesMessage bytesMessage = GrpcAPI.BytesMessage.newBuilder()
-        .setValue(ByteString.copyFrom("test".getBytes()))
+        .setValue(ByteString.copyFrom(address))
         .build();
 
     ChainBaseManager chainBaseManagerMock = mock(ChainBaseManager.class);
