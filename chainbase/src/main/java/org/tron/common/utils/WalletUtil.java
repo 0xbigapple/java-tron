@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.stream.Collectors;
 import org.tron.common.crypto.Hash;
 import org.tron.common.parameter.CommonParameter;
+import org.tron.core.Constant;
 import org.tron.core.capsule.ContractCapsule;
 import org.tron.core.capsule.TransactionCapsule;
 import org.tron.core.exception.ContractValidateException;
@@ -23,6 +24,9 @@ import org.tron.protos.contract.SmartContractOuterClass.SmartContract.ABI.Entry.
 import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
 
 public class WalletUtil {
+
+  private static final String INVALID_ADDRESS = "invalid-address";
+  private static final int INVALID_ADDRESS_PREFIX_BYTES = 4;
 
   public static boolean checkPermissionOperations(Permission permission, Contract contract)
       throws PermissionException {
@@ -115,9 +119,27 @@ public class WalletUtil {
     return false;
   }
 
+  public static String getAddressString(byte[] address) {
+    if (address.length <= Constant.TRON_ADDRESS_SIZE) {
+      return encode58Check(address);
+    }
+    byte[] head = Arrays.copyOf(address, INVALID_ADDRESS_PREFIX_BYTES);
+    return INVALID_ADDRESS + "(" + ByteArray.toHexString(head)
+        + "...,len=" + address.length + ")";
+  }
+
+  public static String getAddressString(ByteString address) {
+    if (address.size() <= Constant.TRON_ADDRESS_SIZE) {
+      return encode58Check(address.toByteArray());
+    }
+    byte[] head = address.substring(0, INVALID_ADDRESS_PREFIX_BYTES).toByteArray();
+    return INVALID_ADDRESS + "(" + ByteArray.toHexString(head)
+        + "...,len=" + address.size() + ")";
+  }
+
   public static List<String> getAddressStringList(Collection<ByteString> collection) {
     return collection.stream()
-        .map(bytes -> encode58Check(bytes.toByteArray()))
+        .map(WalletUtil::getAddressString)
         .collect(Collectors.toList());
   }
 
