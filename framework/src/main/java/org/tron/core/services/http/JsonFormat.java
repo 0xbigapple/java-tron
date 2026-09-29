@@ -861,6 +861,9 @@ public class JsonFormat {
   static String escapeBytesSelfType(ByteString input, final String fieldName) {
     //Address
     if (HttpSelfFormatFieldName.isAddressFormat(fieldName)) {
+      if (input.size() > Constant.TRON_ADDRESS_SIZE) {
+        return ByteArray.toHexString(input.toByteArray());
+      }
       return StringUtil.encode58Check(input.toByteArray());
     }
     //Normal String
