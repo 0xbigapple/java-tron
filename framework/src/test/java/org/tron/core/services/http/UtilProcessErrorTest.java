@@ -4,6 +4,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThrows;
 
 import com.google.protobuf.InvalidProtocolBufferException;
+import java.security.InvalidParameterException;
 import org.bouncycastle.util.encoders.DecoderException;
 import org.bouncycastle.util.encoders.Hex;
 import org.junit.Test;
@@ -28,6 +29,8 @@ public class UtilProcessErrorTest {
         "balance is not sufficient");
     assertError(new MaintenanceUnavailableException("maintenance in progress"),
         "maintenance in progress");
+    assertError(new InvalidParameterException("invalid key [id]: expect a number of at most "
+        + "64 characters"), "invalid key [id]: expect a number of at most 64 characters");
   }
 
   @Test
@@ -65,6 +68,7 @@ public class UtilProcessErrorTest {
     assertError(new JsonFormat.ParseException(""), INTERNAL_SERVER_ERROR);
     assertError(new JsonFormat.ParseException("  "), INTERNAL_SERVER_ERROR);
     assertError(new ContractValidateException("subclass message") { }, INTERNAL_SERVER_ERROR);
+    assertError(new InvalidParameterException(), INTERNAL_SERVER_ERROR);
   }
 
   @Test
