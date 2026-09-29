@@ -144,7 +144,8 @@ public class Util {
     }
     if (type == ParseException.class
         || type == ContractValidateException.class
-        || type == MaintenanceUnavailableException.class) {
+        || type == MaintenanceUnavailableException.class
+        || type == InvalidParameterException.class) {
       String message = e.getMessage();
       return StringUtils.isBlank(message) ? INTERNAL_SERVER_ERROR : message;
     }
