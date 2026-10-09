@@ -360,7 +360,7 @@ public class UtilTest extends BaseTest {
     assertRejected("\"" + StringUtils.repeat('9', 10_000) + "\"");
   }
 
-  /** Quoting must not decide which regime applies: the same digits unquoted are refused too. */
+  /** A number whose own digits run past the bound is refused unquoted as well as quoted. */
   @Test
   public void testPermissionIdRejectsUnquotedNumbersPastTheLengthBoundary() {
     assertRejected("9" + StringUtils.repeat('9', 64));
