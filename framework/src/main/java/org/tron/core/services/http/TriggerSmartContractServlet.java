@@ -3,7 +3,6 @@ package org.tron.core.services.http;
 import com.google.protobuf.ByteString;
 import io.netty.util.internal.StringUtil;
 import java.io.IOException;
-import java.security.InvalidParameterException;
 import java.util.stream.Collectors;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
@@ -17,6 +16,7 @@ import org.tron.common.utils.ByteArray;
 import org.tron.core.Wallet;
 import org.tron.core.capsule.TransactionCapsule;
 import org.tron.core.exception.ContractValidateException;
+import org.tron.core.exception.InvalidHttpParameterException;
 import org.tron.json.JSONObject;
 import org.tron.protos.Protocol.Transaction;
 import org.tron.protos.Protocol.Transaction.Contract.ContractType;
@@ -36,10 +36,10 @@ public class TriggerSmartContractServlet extends RateLimiterServlet {
   private void validateParameter(String contract) {
     JSONObject jsonObject = JSONObject.parseObject(contract);
     if (StringUtil.isNullOrEmpty(jsonObject.getString(Util.OWNER_ADDRESS))) {
-      throw new InvalidParameterException(Util.OWNER_ADDRESS + " isn't set.");
+      throw new InvalidHttpParameterException(Util.OWNER_ADDRESS + " isn't set.");
     }
     if (StringUtil.isNullOrEmpty(jsonObject.getString(Util.CONTRACT_ADDRESS))) {
-      throw new InvalidParameterException(Util.CONTRACT_ADDRESS + " isn't set.");
+      throw new InvalidHttpParameterException(Util.CONTRACT_ADDRESS + " isn't set.");
     }
   }
 

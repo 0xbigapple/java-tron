@@ -25,6 +25,7 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.bouncycastle.util.encoders.DecoderException;
 import org.bouncycastle.util.encoders.Hex;
 import org.eclipse.jetty.http.HttpMethod;
 import org.eclipse.jetty.http.MimeTypes;
@@ -41,6 +42,7 @@ import org.tron.api.GrpcAPI.TransactionSignWeight;
 import org.tron.common.crypto.Hash;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.ByteArray;
+import org.tron.common.utils.DecodeUtil;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.Constant;
 import org.tron.core.actuator.TransactionFactory;
@@ -49,6 +51,7 @@ import org.tron.core.capsule.TransactionCapsule;
 import org.tron.core.config.args.Args;
 import org.tron.core.db.TransactionTrace;
 import org.tron.core.exception.ContractValidateException;
+import org.tron.core.exception.InvalidHttpParameterException;
 import org.tron.core.exception.MaintenanceUnavailableException;
 import org.tron.core.services.http.JsonFormat.ParseException;
 import org.tron.json.JSON;
@@ -75,6 +78,10 @@ public class Util {
       "'events' field is deprecated and no longer supported";
 
   public static final String PERMISSION_ID = "Permission_id";
+  private static final String INVALID_PERMISSION_ID =
+      "invalid " + PERMISSION_ID + ": expect a 32-bit integer";
+  private static final int MAX_JSON_INTEGER_VALUE_LENGTH = 64;
+  private static final String INVALID_JSON_BODY = "INVALID JSON body";
   public static final String VISIBLE = "visible";
   public static final String INT64_AS_STRING_PARAM = "int64_as_string";
   public static final String TRANSACTION = "transaction";
@@ -138,7 +145,8 @@ public class Util {
     }
     if (type == ParseException.class
         || type == ContractValidateException.class
-        || type == MaintenanceUnavailableException.class) {
+        || type == MaintenanceUnavailableException.class
+        || type == InvalidHttpParameterException.class) {
       String message = e.getMessage();
       return StringUtils.isBlank(message) ? INTERNAL_SERVER_ERROR : message;
     }
@@ -458,14 +466,48 @@ public class Util {
     return ByteArray.toHexString(ByteString.copyFromUtf8(string).toByteArray());
   }
 
+  /**
+   * Rejects a json value that cannot be a bounded-length number, before anything converts it. A
+   * container is not a number and reaches the conversion as its full serialized form, so it has to
+   * be turned away by type rather than by length. An absent value is left to the caller, which is
+   * what distinguishes an optional key from a required one.
+   *
+   * @throws InvalidHttpParameterException if the value is not a number, or is longer than the bound
+   */
+  private static void checkJsonNumberValue(Object rawValue, String message) {
+    if (rawValue == null) {
+      return;
+    }
+    if (!(rawValue instanceof String || rawValue instanceof Number)
+        || rawValue.toString().length() > MAX_JSON_INTEGER_VALUE_LENGTH) {
+      throw new InvalidHttpParameterException(message);
+    }
+  }
+
   public static Transaction setTransactionPermissionId(JSONObject jsonObject,
       Transaction transaction) {
-    if (jsonObject.containsKey(PERMISSION_ID)) {
-      int permissionId = jsonObject.getInteger(PERMISSION_ID);
-      return setTransactionPermissionId(permissionId, transaction);
+    if (!jsonObject.containsKey(PERMISSION_ID)) {
+      return transaction;
     }
-
-    return transaction;
+    int permissionId;
+    try {
+      Object rawValue = jsonObject.get(PERMISSION_ID);
+      checkJsonNumberValue(rawValue, INVALID_PERMISSION_ID);
+      BigDecimal value = jsonObject.getBigDecimal(PERMISSION_ID);
+      if (value == null) {
+        throw new InvalidHttpParameterException(INVALID_PERMISSION_ID);
+      }
+      // Preserve getInteger's legacy string syntax, but require it to match the exact conversion.
+      int exact = value.intValueExact();
+      Integer legacy = jsonObject.getInteger(PERMISSION_ID);
+      if (legacy == null || legacy != exact) {
+        throw new InvalidHttpParameterException(INVALID_PERMISSION_ID);
+      }
+      permissionId = exact;
+    } catch (NumberFormatException | ArithmeticException | JSONException e) {
+      throw new InvalidHttpParameterException(INVALID_PERMISSION_ID, e);
+    }
+    return setTransactionPermissionId(permissionId, transaction);
   }
 
   public static Transaction setTransactionPermissionId(int permissionId, Transaction transaction) {
@@ -532,11 +574,17 @@ public class Util {
   }
 
   public static long getJsonLongValue(JSONObject jsonObject, String key, boolean required) {
-    BigDecimal bigDecimal = jsonObject.getBigDecimal(key);
-    if (required && bigDecimal == null) {
-      throw new InvalidParameterException("key [" + key + "] does not exist");
+    String invalid = "invalid key [" + key + "]: expect a 64-bit integer";
+    try {
+      checkJsonNumberValue(jsonObject.get(key), invalid);
+      BigDecimal bigDecimal = jsonObject.getBigDecimal(key);
+      if (required && bigDecimal == null) {
+        throw new InvalidHttpParameterException("key [" + key + "] does not exist");
+      }
+      return (bigDecimal == null) ? 0L : bigDecimal.longValueExact();
+    } catch (NumberFormatException | ArithmeticException | JSONException e) {
+      throw new InvalidHttpParameterException(invalid, e);
     }
-    return (bigDecimal == null) ? 0L : bigDecimal.longValueExact();
   }
 
   public static String getMemo(byte[] memo) {
@@ -600,16 +648,42 @@ public class Util {
     }
   }
 
+  /**
+   * Returns the address the request carries. An address parameter that is missing or unusable,
+   * and a json body that cannot be parsed, are reported as an InvalidHttpParameterException whose
+   * message is a fixed text, so that the address-keyed endpoints and their solidity/PBFT mirrors
+   * answer a given malformed request identically without each having to classify the failure.
+   * Nothing derived from the request may go into that message. A query string or form body the
+   * container itself cannot parse is not classified here and propagates unchanged.
+   */
   public static byte[] getAddress(HttpServletRequest request) throws Exception {
-    byte[] address = null;
     String addressParam = "address";
-    String addressStr = checkGetParam(request, addressParam);
-    if (StringUtils.isNotBlank(addressStr)) {
-      if (StringUtils.startsWith(addressStr, Constant.ADD_PRE_FIX_STRING_MAINNET)) {
-        address = Hex.decode(addressStr);
-      } else {
-        address = decodeFromBase58Check(addressStr);
-      }
+    String addressStr;
+    try {
+      addressStr = checkGetParam(request, addressParam);
+    } catch (JSONException e) {
+      throw new InvalidHttpParameterException(INVALID_JSON_BODY);
+    }
+    if (StringUtils.isBlank(addressStr)) {
+      throw new InvalidHttpParameterException(INVALID_ADDRESS_MSG);
+    }
+
+    boolean hex = StringUtils.startsWith(addressStr, Constant.ADD_PRE_FIX_STRING_MAINNET);
+    // bound the hex input before decoding, mirroring the base58 length short-circuit
+    if (hex && addressStr.length() != DecodeUtil.ADDRESS_SIZE) {
+      throw new InvalidHttpParameterException(INVALID_ADDRESS_MSG);
+    }
+
+    byte[] address;
+    try {
+      address = hex ? Hex.decode(addressStr) : decodeFromBase58Check(addressStr);
+    } catch (DecoderException | IllegalArgumentException exception) {
+      // both decoders name the offending character and its offset, which is caller input
+      throw new InvalidHttpParameterException(INVALID_ADDRESS_MSG);
+    }
+    // base58 is validated inside the decoder; hex used to be returned unchecked
+    if (address == null || (hex && !DecodeUtil.addressValid(address))) {
+      throw new InvalidHttpParameterException(INVALID_ADDRESS_MSG);
     }
     return address;
   }
@@ -689,17 +763,17 @@ public class Util {
   public static void validateParameter(String contract) throws InvalidParameterException {
     JSONObject jsonObject = JSONObject.parseObject(contract);
     if (StringUtils.isEmpty(jsonObject.getString(OWNER_ADDRESS))) {
-      throw new InvalidParameterException(OWNER_ADDRESS + " isn't set.");
+      throw new InvalidHttpParameterException(OWNER_ADDRESS + " isn't set.");
     }
     if (StringUtils.isEmpty(jsonObject.getString(CONTRACT_ADDRESS))
         && StringUtils.isEmpty(jsonObject.getString(CALL_DATA))) {
-      throw new InvalidParameterException("At least one of "
+      throw new InvalidHttpParameterException("At least one of "
           + CONTRACT_ADDRESS + " and " + CALL_DATA + " must be set.");
     }
     if (StringUtils.isEmpty(jsonObject.getString(CONTRACT_ADDRESS))
         && !StringUtils.isEmpty(jsonObject.getString(FUNCTION_SELECTOR))
         && !StringUtils.isEmpty(jsonObject.getString(CALL_DATA))) {
-      throw new InvalidParameterException("While trying to deploy, "
+      throw new InvalidHttpParameterException("While trying to deploy, "
           + FUNCTION_SELECTOR + " and " + CALL_DATA + " can not be both set.");
     }
   }
