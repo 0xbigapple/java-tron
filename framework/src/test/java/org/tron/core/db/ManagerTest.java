@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
@@ -20,8 +21,17 @@ import static org.tron.protos.Protocol.Transaction.Result.contractResult.SUCCESS
 import com.beust.jcommander.internal.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonNull;
+import com.google.gson.JsonObject;
 import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
+import com.googlecode.jsonrpc4j.JsonRpcServer;
+import com.googlecode.jsonrpc4j.ProxyUtil;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
@@ -33,12 +43,14 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.Assert;
 import org.junit.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.MockedStatic;
 import org.tron.api.GrpcAPI;
 import org.tron.common.BaseMethodTest;
@@ -54,8 +66,11 @@ import org.tron.common.logsfilter.capsule.TransactionLogTriggerCapsule;
 import org.tron.common.logsfilter.capsule.TriggerCapsule;
 import org.tron.common.logsfilter.queue.FilterCapsuleQueue;
 import org.tron.common.logsfilter.trigger.ContractLogTrigger;
+import org.tron.common.logsfilter.trigger.ContractTrigger;
 import org.tron.common.parameter.CommonParameter;
+import org.tron.common.runtime.ProgramResult;
 import org.tron.common.runtime.RuntimeImpl;
+import org.tron.common.runtime.vm.LogInfo;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.Commons;
 import org.tron.common.utils.JsonUtil;
@@ -107,6 +122,9 @@ import org.tron.core.exception.ValidateScheduleException;
 import org.tron.core.exception.ValidateSignatureException;
 import org.tron.core.exception.ZksnarkException;
 import org.tron.core.net.TronNetDelegate;
+import org.tron.core.services.jsonrpc.JsonRpcErrorResolver;
+import org.tron.core.services.jsonrpc.TronJsonRpc;
+import org.tron.core.services.jsonrpc.TronJsonRpcImpl;
 import org.tron.core.store.AccountStore;
 import org.tron.core.store.CodeStore;
 import org.tron.core.store.DynamicPropertiesStore;
@@ -114,6 +132,9 @@ import org.tron.core.store.ExchangeStore;
 import org.tron.core.store.ExchangeV2Store;
 import org.tron.core.store.IncrementalMerkleTreeStore;
 import org.tron.core.store.StoreFactory;
+import org.tron.json.JSON;
+import org.tron.json.JSONArray;
+import org.tron.json.JSONObject;
 import org.tron.protos.Protocol;
 import org.tron.protos.Protocol.Account;
 import org.tron.protos.Protocol.Block;
@@ -1506,6 +1527,21 @@ public class ManagerTest extends BaseMethodTest {
     dbManager.getTriggerCapsuleQueue().clear();
   }
 
+  private void attachContractTrigger(BlockCapsule block, String uniqueId) {
+    TransactionCapsule transaction = spy(block.getTransactions().get(0));
+    ContractTrigger trigger = new ContractTrigger();
+    trigger.setLogInfo(new LogInfo(new byte[21], new ArrayList<>(), new byte[0]));
+    trigger.setBlockNumber(block.getNum());
+    trigger.setUniqueId(uniqueId);
+    ProgramResult runtimeResult = mock(ProgramResult.class);
+    when(runtimeResult.getTriggerList()).thenReturn(Arrays.asList(trigger));
+    TransactionTrace trace = mock(TransactionTrace.class);
+    when(trace.getRuntimeResult()).thenReturn(runtimeResult);
+    transaction.setTrxTrace(trace);
+    doNothing().when(transaction).setTrxTrace(any(TransactionTrace.class));
+    block.getTransactions().set(0, transaction);
+  }
+
   private BlockCapsule blockWithOneTransfer() {
     BlockCapsule block = new BlockCapsule(1, chainManager.getGenesisBlockId(),
         System.currentTimeMillis(), ByteString.EMPTY);
@@ -1572,13 +1608,110 @@ public class ManagerTest extends BaseMethodTest {
     List<KhaosDatabase.KhaosBlock> branch = new ArrayList<>();
     branch.add(new KhaosDatabase.KhaosBlock(block));
     try {
-      Method m = Manager.class.getDeclaredMethod("reApplyBlockEvents", List.class);
+      Method m = Manager.class.getDeclaredMethod("reApplyBlockEvents", List.class,
+          boolean.class);
       m.setAccessible(true);
-      m.invoke(dbManager, branch);
+      m.invoke(dbManager, branch, true);
       // forward block trigger emitted for the re-applied fork branch (removed=false)
       Assert.assertEquals(1, queue.size());
       Assert.assertFalse(((BlockLogTriggerCapsule) queue.poll())
           .getBlockLogTrigger().isRemoved());
+    } finally {
+      restoreLoader(originalLoader);
+    }
+  }
+
+  @Test
+  public void testPostForkBranchEventsSwallowsReplayFailure() throws Exception {
+    Field instanceField = EventPluginLoader.class.getDeclaredField("instance");
+    instanceField.setAccessible(true);
+    EventPluginLoader originalLoader = (EventPluginLoader) instanceField.get(null);
+    EventPluginLoader mockLoader = installMockLoader();
+    when(mockLoader.getVersion()).thenReturn(0);
+    when(mockLoader.isBlockLogTriggerEnable()).thenThrow(new IllegalStateException("replay"));
+
+    BlockCapsule block = new BlockCapsule(1, chainManager.getGenesisBlockId(),
+        System.currentTimeMillis(), ByteString.EMPTY);
+    List<KhaosDatabase.KhaosBlock> branch = new ArrayList<>();
+    branch.add(new KhaosDatabase.KhaosBlock(block));
+    try {
+      Method m = Manager.class.getDeclaredMethod("postForkBranchEvents", List.class, List.class,
+          boolean.class);
+      m.setAccessible(true);
+      // a failing replay is logged, not propagated: the switch outcome is already decided
+      m.invoke(dbManager, branch, new ArrayList<>(), true);
+      verify(mockLoader).isBlockLogTriggerEnable();
+    } finally {
+      restoreLoader(originalLoader);
+    }
+  }
+
+  @Test
+  public void testForkSwitchDefersContractTriggerUntilBranchCompletion() throws Exception {
+    Field instanceField = EventPluginLoader.class.getDeclaredField("instance");
+    instanceField.setAccessible(true);
+    EventPluginLoader originalLoader = (EventPluginLoader) instanceField.get(null);
+    EventPluginLoader mockLoader = installMockLoader();
+    when(mockLoader.getVersion()).thenReturn(0);
+
+    try {
+      Method method = Manager.class.getDeclaredMethod(
+          "shouldPostContractTriggerImmediately", BlockCapsule.class);
+      method.setAccessible(true);
+      BlockCapsule block = blockWithOneTransfer();
+      block.setMerkleRoot();
+      Assert.assertTrue((boolean) method.invoke(dbManager, block));
+      block.setSwitch(true);
+      Assert.assertFalse((boolean) method.invoke(dbManager, block));
+    } finally {
+      restoreLoader(originalLoader);
+    }
+  }
+
+  @Test
+  public void testPostContractTriggersUsesAppliedBlockTraceAndCapturedSolidifiedHeight()
+      throws Exception {
+    Field instanceField = EventPluginLoader.class.getDeclaredField("instance");
+    instanceField.setAccessible(true);
+    EventPluginLoader originalLoader = (EventPluginLoader) instanceField.get(null);
+    EventPluginLoader mockLoader = installMockLoader();
+    when(mockLoader.isContractLogTriggerEnable()).thenReturn(true);
+    when(mockLoader.isContractEventTriggerEnable()).thenReturn(false);
+    when(mockLoader.isSolidityLogTriggerEnable()).thenReturn(false);
+    when(mockLoader.isSolidityEventTriggerEnable()).thenReturn(false);
+
+    BlockCapsule block = blockWithOneTransfer();
+    block.setMerkleRoot();
+    TransactionCapsule transaction = block.getTransactions().get(0);
+    ContractTrigger contractTrigger = new ContractTrigger();
+    contractTrigger.setLogInfo(new LogInfo(new byte[21], new ArrayList<>(), new byte[0]));
+    contractTrigger.setBlockNumber(block.getNum());
+    contractTrigger.setUniqueId("txid_0");
+    ProgramResult runtimeResult = mock(ProgramResult.class);
+    when(runtimeResult.getTriggerList()).thenReturn(Arrays.asList(contractTrigger));
+    TransactionTrace trace = mock(TransactionTrace.class);
+    when(trace.getRuntimeResult()).thenReturn(runtimeResult);
+    transaction.setTrxTrace(trace);
+
+    try {
+      Class<?> batchClass = Arrays.stream(Manager.class.getDeclaredClasses())
+          .filter(type -> type.getSimpleName().equals("ForkContractTriggerBlock"))
+          .findFirst().orElseThrow(AssertionError::new);
+      Constructor<?> constructor = batchClass.getDeclaredConstructor(
+          BlockCapsule.class, long.class);
+      constructor.setAccessible(true);
+      Object batch = constructor.newInstance(block, 77L);
+      Method method = Manager.class.getDeclaredMethod("postContractTriggers", List.class);
+      method.setAccessible(true);
+      method.invoke(dbManager, Arrays.asList(batch));
+
+      ArgumentCaptor<ContractLogTrigger> triggerCaptor =
+          ArgumentCaptor.forClass(ContractLogTrigger.class);
+      verify(mockLoader).postContractLogTrigger(triggerCaptor.capture());
+      ContractLogTrigger posted = triggerCaptor.getValue();
+      Assert.assertFalse(posted.isRemoved());
+      Assert.assertEquals(77L, posted.getLatestSolidifiedBlockNumber());
+      Assert.assertEquals(block.getBlockId().toString(), posted.getBlockHash());
     } finally {
       restoreLoader(originalLoader);
     }
@@ -1939,13 +2072,53 @@ public class ManagerTest extends BaseMethodTest {
     NONE, PREFIX, HEAD
   }
 
+  @Test
+  public void switchForkShouldReemitOldBranchEventsAfterFailedCandidateSwitch()
+      throws Exception {
+    boolean jsonRpcEnabled = CommonParameter.getInstance().jsonRpcHttpFullNodeEnable;
+    Field instanceField = EventPluginLoader.class.getDeclaredField("instance");
+    instanceField.setAccessible(true);
+    EventPluginLoader originalLoader = (EventPluginLoader) instanceField.get(null);
+    EventPluginLoader mockLoader = installMockLoader();
+    when(mockLoader.isContractLogTriggerEnable()).thenReturn(true);
+    when(mockLoader.isContractEventTriggerEnable()).thenReturn(false);
+    when(mockLoader.isSolidityLogTriggerEnable()).thenReturn(false);
+    when(mockLoader.isSolidityEventTriggerEnable()).thenReturn(false);
+    List<ContractLogTrigger> contractEvents = new ArrayList<>();
+    doAnswer(invocation -> {
+      contractEvents.add(invocation.getArgument(0));
+      return null;
+    }).when(mockLoader).postContractLogTrigger(any(ContractLogTrigger.class));
+    try {
+      checkForkRecovery(false, false, ForkRetryFailure.NONE, true, contractEvents);
+    } finally {
+      restoreLoader(originalLoader);
+      CommonParameter.getInstance().jsonRpcHttpFullNodeEnable = jsonRpcEnabled;
+    }
+  }
+
+  private void checkForkRecovery(boolean failRestore, boolean retryOldHead,
+      ForkRetryFailure retryFailure) throws Exception {
+    checkForkRecovery(failRestore, retryOldHead, retryFailure, false);
+  }
+
+  private void checkForkRecovery(boolean failRestore, boolean retryOldHead,
+      ForkRetryFailure retryFailure, boolean assertReorgEvents) throws Exception {
+    checkForkRecovery(failRestore, retryOldHead, retryFailure, assertReorgEvents, null);
+  }
+
   private void checkForkRecovery(boolean failRestore, boolean retryOldHead) throws Exception {
     checkForkRecovery(failRestore, retryOldHead, ForkRetryFailure.NONE);
   }
 
   private void checkForkRecovery(boolean failRestore, boolean retryOldHead,
-      ForkRetryFailure retryFailure) throws Exception {
+      ForkRetryFailure retryFailure, boolean assertReorgEvents,
+      List<ContractLogTrigger> contractEvents) throws Exception {
     // Assert committed chain state without concurrently replaying pending transactions.
+    boolean jsonRpcEnabled = CommonParameter.getInstance().jsonRpcHttpFullNodeEnable;
+    if (assertReorgEvents) {
+      CommonParameter.getInstance().jsonRpcHttpFullNodeEnable = true;
+    }
     dbManager.stopRePushThread();
     String key = PublicMethod.getRandomPrivateKey();
     byte[] privateKey = ByteArray.fromHexString(key);
@@ -1984,14 +2157,40 @@ public class ManagerTest extends BaseMethodTest {
     // Decode signed blocks as on the receive path; do not bypass transaction verification.
     BlockCapsule oldHead = new BlockCapsule(blockWithTransfer(time + 6000, base + 2,
         parent.getBlockId().getByteString(), keys, oldTx).getData());
+    if (assertReorgEvents) {
+      attachContractTrigger(oldHead, "old-head-event");
+    }
     dbManager.pushBlock(oldHead);
     long oldOwnerBalance = chainManager.getAccountStore().get(owner).getBalance();
     Assert.assertEquals(11L, chainManager.getAccountStore().get(receiver).getBalance());
+    FilterCapsuleQueue eventQueue = assertReorgEvents
+        ? context.getBean(FilterCapsuleQueue.class) : null;
+    JsonRpcServer jsonRpcServer = null;
+    String jsonRpcFilterId = null;
+    if (assertReorgEvents) {
+      while (eventQueue.poll(0, TimeUnit.MILLISECONDS) != null) {
+        // Discard events from the setup blocks; keep only this fork attempt's notifications.
+      }
+      jsonRpcServer = newJsonRpcServer(context.getBean(TronJsonRpcImpl.class));
+      JSONObject filterResponse = handleJsonRpc(jsonRpcServer, "eth_newFilter",
+          jsonParams(new JsonObject()));
+      Assert.assertFalse(filterResponse.toString(), filterResponse.containsKey("error"));
+      jsonRpcFilterId = filterResponse.getString("result");
+      Assert.assertNotNull(jsonRpcFilterId);
+    }
     BlockCapsule fork = new BlockCapsule(blockWithTransfer(time + 6001, base + 2,
         parent.getBlockId().getByteString(), keys, forkTx).getData());
     dbManager.pushBlock(fork);
     BlockCapsule newHead = new BlockCapsule(blockWithTransfer(time + 9000, base + 3,
         fork.getBlockId().getByteString(), keys, newHeadTx).getData());
+    if (assertReorgEvents) {
+      KhaosDatabase.KhaosBlock forkKhaosBlock = chainManager.getKhaosDb().getMiniStore()
+          .getByHash(fork.getBlockId());
+      BlockCapsule cachedFork = forkKhaosBlock.getBlk();
+      attachContractTrigger(cachedFork, "failed-fork-event");
+      forkKhaosBlock.commit(cachedFork);
+      attachContractTrigger(newHead, "failed-head-event");
+    }
     RuntimeException failure = new IllegalStateException("injected fork block write failure");
     RuntimeException restoreFailure =
         new IllegalStateException("injected old block write failure");
@@ -2025,7 +2224,6 @@ public class ManagerTest extends BaseMethodTest {
       return null;
     }).when(failingBlockStore).put(any(byte[].class), any(BlockCapsule.class));
     ReflectUtils.setFieldValue(chainManager, "blockStore", failingBlockStore);
-    boolean jsonRpcEnabled = CommonParameter.getInstance().jsonRpcHttpFullNodeEnable;
     try {
       RuntimeException thrown = assertThrows(RuntimeException.class,
           () -> dbManager.pushBlock(newHead));
@@ -2064,6 +2262,26 @@ public class ManagerTest extends BaseMethodTest {
         Assert.assertTrue(chainManager.getTransactionStore()
             .has(oldTx.getTransactionId().getBytes()));
         retry = new BlockCapsule(newHead.getData());
+        if (assertReorgEvents) {
+          Assert.assertTrue("failed switch removes old-head logs",
+              hasLogsFilterCapsule(eventQueue, oldHead, true));
+          Assert.assertTrue("restoration re-emits old-head logs",
+              hasLogsFilterCapsule(eventQueue, oldHead, false));
+          Assert.assertFalse("restoration must not republish the old-head block filter",
+              hasBlockFilterCapsule(eventQueue, oldHead));
+          Assert.assertFalse("failed candidate prefix is not emitted",
+              hasLogsFilterCapsule(eventQueue, fork, false));
+          Assert.assertFalse("failed candidate head is not emitted",
+              hasLogsFilterCapsule(eventQueue, newHead, false));
+          Assert.assertNotNull(contractEvents);
+          Assert.assertEquals("only old-head removal and restoration are published",
+              2, contractEvents.size());
+          Assert.assertEquals("old-head-event", contractEvents.get(0).getUniqueId());
+          Assert.assertTrue(contractEvents.get(0).isRemoved());
+          Assert.assertEquals("old-head-event", contractEvents.get(1).getUniqueId());
+          Assert.assertFalse(contractEvents.get(1).isRemoved());
+          assertJsonRpcFilterChanges(jsonRpcServer, jsonRpcFilterId, eventQueue, oldHead);
+        }
       }
 
       if (retryFailure != ForkRetryFailure.NONE) {
@@ -2209,6 +2427,83 @@ public class ManagerTest extends BaseMethodTest {
     blockCapsule.setMerkleRoot();
     blockCapsule.sign(ByteArray.fromHexString(keys.get(witnessAddress)));
     return blockCapsule;
+  }
+
+  private void assertJsonRpcFilterChanges(JsonRpcServer server, String filterId,
+      FilterCapsuleQueue queue, BlockCapsule restoredBlock) throws Exception {
+    List<LogsFilterCapsule> restoredBlockEvents = new ArrayList<>();
+    Object queued;
+    while ((queued = queue.poll(0, TimeUnit.MILLISECONDS)) != null) {
+      if (queued instanceof LogsFilterCapsule) {
+        LogsFilterCapsule logs = (LogsFilterCapsule) queued;
+        if (restoredBlock.getBlockId().toString().equals(logs.getBlockHash())) {
+          restoredBlockEvents.add(logs);
+        }
+      }
+    }
+
+    Assert.assertEquals("old branch removal and restoration should both be queued",
+        2, restoredBlockEvents.size());
+    TronJsonRpcImpl tronJsonRpc = context.getBean(TronJsonRpcImpl.class);
+    for (LogsFilterCapsule logs : restoredBlockEvents) {
+      List<Protocol.TransactionInfo> transactionInfos = new ArrayList<>();
+      Protocol.TransactionInfo.Log syntheticLog = Protocol.TransactionInfo.Log.newBuilder()
+          .setAddress(ByteString.copyFrom(new byte[20])).build();
+      for (Protocol.TransactionInfo transactionInfo : logs.getTxInfoList()) {
+        transactionInfos.add(transactionInfo.toBuilder().addLog(syntheticLog).build());
+      }
+      Assert.assertFalse("test block must contain a transaction", transactionInfos.isEmpty());
+      logs.setTxInfoList(transactionInfos);
+      tronJsonRpc.handleLogsFilter(logs);
+    }
+
+    JSONObject response = handleJsonRpc(server, "eth_getFilterChanges", jsonParams(filterId));
+    Assert.assertFalse(response.toString(), response.containsKey("error"));
+    JSONArray changes = response.getJSONArray("result");
+    Assert.assertEquals(2, changes.size());
+    Assert.assertTrue("first change withdraws the old log",
+        changes.getJSONObject(0).getBoolean("removed"));
+    Assert.assertFalse("second change restores the old log",
+        changes.getJSONObject(1).getBoolean("removed"));
+  }
+
+  private JsonRpcServer newJsonRpcServer(TronJsonRpcImpl tronJsonRpc) {
+    Object service = ProxyUtil.createCompositeServiceProxy(
+        Thread.currentThread().getContextClassLoader(),
+        new Object[] {tronJsonRpc}, new Class[] {TronJsonRpc.class}, true);
+    JsonRpcServer server = new JsonRpcServer(service);
+    server.setErrorResolver(JsonRpcErrorResolver.INSTANCE);
+    server.setShouldLogInvocationErrors(false);
+    return server;
+  }
+
+  private JSONObject handleJsonRpc(JsonRpcServer server, String method, JsonArray params)
+      throws Exception {
+    JsonObject request = new JsonObject();
+    request.addProperty("jsonrpc", "2.0");
+    request.addProperty("method", method);
+    request.add("params", params);
+    request.addProperty("id", 1);
+    ByteArrayOutputStream output = new ByteArrayOutputStream();
+    server.handleRequest(new ByteArrayInputStream(request.toString().getBytes("UTF-8")), output);
+    return JSON.parseObject(output.toString("UTF-8"));
+  }
+
+  private JsonArray jsonParams(Object... values) {
+    JsonArray params = new JsonArray();
+    for (Object value : values) {
+      if (value instanceof JsonElement) {
+        params.add((JsonElement) value);
+      } else if (value instanceof String) {
+        params.add((String) value);
+      } else if (value == null) {
+        params.add(JsonNull.INSTANCE);
+      } else {
+        throw new IllegalArgumentException("unsupported JSON parameter type: "
+            + value.getClass());
+      }
+    }
+    return params;
   }
 
   private boolean hasLogsFilterCapsule(FilterCapsuleQueue queue, BlockCapsule b,

@@ -41,6 +41,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import javax.annotation.PostConstruct;
+import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
@@ -1107,6 +1108,8 @@ public class Manager {
       List<KhaosBlock> first = new ArrayList<>(binaryTree.getKey());
       Collections.reverse(first);
       Sha256Hash parentHash = first.get(0).getParentHash();
+      List<ForkContractTriggerBlock> contractTriggerBlocks = new ArrayList<>();
+      boolean collectContractTriggers = isContractTriggerEnabled();
       for (KhaosBlock item : first) {
         try (ISession tmpSession = revokingStore.buildSession()) {
           BlockCapsule forkBlock = item.getId().equals(newHead.getBlockId())
@@ -1123,9 +1126,15 @@ public class Manager {
           for (TransactionCapsule tx : forkBlock.getTransactions()) {
             tx.setVerified(false);
           }
+          long latestSolidifiedBlockNumber = getDynamicPropertiesStore()
+              .getLatestSolidifiedBlockNum();
           applyBlock(forkBlock.setSwitch(true));
           tmpSession.commit();
           item.commit(forkBlock);
+          if (collectContractTriggers) {
+            contractTriggerBlocks.add(new ForkContractTriggerBlock(forkBlock,
+                latestSolidifiedBlockNumber));
+          }
         } catch (Exception switchException) {
           Metrics.counterInc(MetricKeys.Counter.BLOCK_FORK, 1, MetricLabels.FAIL);
           MetricsUtil.meterMark(MetricsKey.BLOCKCHAIN_FAIL_FORK_COUNT);
@@ -1136,6 +1145,7 @@ public class Manager {
           first.stream()
               .filter(block -> !block.isProcessed())
               .forEach(block -> khaosDb.removeBlk(block.getId()));
+          contractTriggerBlocks.clear();
 
           while (!getDynamicPropertiesStore()
               .getLatestBlockHeaderHash()
@@ -1147,11 +1157,19 @@ public class Manager {
 
           List<KhaosBlock> second = new ArrayList<>(binaryTree.getValue());
           Collections.reverse(second);
+          List<ForkContractTriggerBlock> restoredContractTriggerBlocks = new ArrayList<>();
           for (KhaosBlock khaosBlock : second) {
             try (ISession tmpSession = revokingStore.buildSession()) {
-              applyBlock(khaosBlock.getBlk().setSwitch(true));
+              BlockCapsule restoredBlock = khaosBlock.getBlk().setSwitch(true);
+              long latestSolidifiedBlockNumber = getDynamicPropertiesStore()
+                  .getLatestSolidifiedBlockNum();
+              applyBlock(restoredBlock);
               tmpSession.commit();
               khaosDb.setHead(khaosBlock);
+              if (collectContractTriggers) {
+                restoredContractTriggerBlocks.add(new ForkContractTriggerBlock(restoredBlock,
+                    latestSolidifiedBlockNumber));
+              }
             } catch (Exception restoreException) {
               restoreException.addSuppressed(switchException);
               logger.error("Failed to restore previous chain at block {}.",
@@ -1159,12 +1177,15 @@ public class Manager {
               throw restoreException;
             }
           }
+          // The previous branch is canonical again; restore its forward notifications before
+          // propagating the failed candidate switch.
+          postForkBranchEvents(second, restoredContractTriggerBlocks, false);
           throw switchException;
         }
       }
       // only reached when the whole new branch applied cleanly; a failed switch rethrows above
       khaosDb.setHead(binaryTree.getKey().peekFirst());
-      reApplyBlockEvents(first);
+      postForkBranchEvents(first, contractTriggerBlocks, true);
     }
 
   }
@@ -1542,10 +1563,8 @@ public class Manager {
     TransactionInfoCapsule transactionInfo = TransactionUtil
         .buildTransactionInfoInstance(trxCap, blockCap, trace);
 
-    // if event subscribe is enabled, post contract triggers to queue
-    // only trigger when process block
-    if (Objects.nonNull(blockCap) && !blockCap.isMerkleRootEmpty()
-        && EventPluginLoader.getInstance().getVersion() == 0) {
+    // Fork-switch blocks defer contract triggers until the whole branch is applied.
+    if (shouldPostContractTriggerImmediately(blockCap)) {
       String blockHash = blockCap.getBlockId().toString();
       postContractTrigger(trace, false, blockHash);
     }
@@ -2299,20 +2318,36 @@ public class Manager {
     }
   }
 
-  // Post the FULL-stream block and logs filters for each block of the new canonical branch
-  // (oldest-first). Must be kept in sync with the FULL-filter section of blockTrigger.
+  // The ledger is already committed here; a notification failure must not change the switch
+  // outcome or mask the original switch exception, so log it and continue.
+  private void postForkBranchEvents(List<KhaosBlock> branch,
+      List<ForkContractTriggerBlock> contractTriggerBlocks, boolean emitBlockFilter) {
+    try {
+      postContractTriggers(contractTriggerBlocks);
+      reApplyBlockEvents(branch, emitBlockFilter);
+    } catch (Exception e) {
+      logger.error("Fork branch event replay failed. head: {}, branch size: {}",
+          getHeadBlockNum(), branch.size(), e);
+    }
+  }
+
+  // Post the forward notifications for each block of the new canonical branch (oldest-first).
+  // Block filters are omitted when restoring a previously-notified branch because they do not
+  // have a corresponding removal notification. Must otherwise stay in sync with blockTrigger.
   // Solidity filters are intentionally not posted here: solidification events for these
   // blocks arrive later, when postSolidityFilter runs against the then-canonical chain.
-  // Re-emit the per-block subscription events for a newly-applied fork branch after a chain
-  // reorg: JSON-RPC block/logs filters and event-subscribe block/transaction triggers. The
-  // fork-switch path returns before blockTrigger() runs, so without this these forward events
-  // would be lost for the re-applied blocks (contract triggers are already re-emitted during
-  // applyBlock). All emitted as forward (removed=false): these blocks are now canonical.
-  private void reApplyBlockEvents(List<KhaosBlock> newBranch) {
+  // Re-emit forward notifications for a newly-applied fork branch after a chain reorg. The
+  // fork-switch path returns before blockTrigger() runs, so logs and event-subscribe
+  // block/transaction triggers would otherwise be lost. On restoration, skip block filters:
+  // their original forward notification was never removed. Contract triggers are emitted
+  // separately by postContractTriggers after the whole branch has been applied.
+  private void reApplyBlockEvents(List<KhaosBlock> newBranch, boolean emitBlockFilter) {
     if (CommonParameter.getInstance().isJsonRpcHttpFullNodeEnable()) {
       for (KhaosBlock khaosBlock : newBranch) {
         BlockCapsule blockCapsule = khaosBlock.getBlk();
-        postBlockFilter(blockCapsule, false);
+        if (emitBlockFilter) {
+          postBlockFilter(blockCapsule, false);
+        }
         postLogsFilter(blockCapsule, false, false);
       }
     }
@@ -2463,34 +2498,79 @@ public class Manager {
     }
   }
 
+  private boolean shouldPostContractTriggerImmediately(BlockCapsule blockCap) {
+    return blockCap != null && !blockCap.isSwitch() && !blockCap.isMerkleRootEmpty()
+        && EventPluginLoader.getInstance().getVersion() == 0;
+  }
+
   private void postContractTrigger(final TransactionTrace trace, boolean remove, String blockHash) {
-    boolean isContractTriggerEnable = EventPluginLoader.getInstance()
-        .isContractEventTriggerEnable() || EventPluginLoader
-        .getInstance().isContractLogTriggerEnable();
-    boolean isSolidityContractTriggerEnable = EventPluginLoader.getInstance()
-        .isSolidityEventTriggerEnable() || EventPluginLoader
-        .getInstance().isSolidityLogTriggerEnable();
-    if (eventPluginLoaded
-        && (isContractTriggerEnable || isSolidityContractTriggerEnable)) {
+    postContractTrigger(trace, remove, blockHash, null);
+  }
+
+  private void postContractTrigger(final TransactionTrace trace, boolean remove, String blockHash,
+      Long latestSolidifiedBlockNumber) {
+    if (isContractTriggerEnabled()) {
       // be careful, trace.getRuntimeResult().getTriggerList() should never return null
       for (ContractTrigger trigger : trace.getRuntimeResult().getTriggerList()) {
         ContractTriggerCapsule contractTriggerCapsule = new ContractTriggerCapsule(trigger);
         contractTriggerCapsule.getContractTrigger().setRemoved(remove);
-        contractTriggerCapsule.setLatestSolidifiedBlockNumber(getDynamicPropertiesStore()
-            .getLatestSolidifiedBlockNum());
+        contractTriggerCapsule.setLatestSolidifiedBlockNumber(latestSolidifiedBlockNumber == null
+            ? getDynamicPropertiesStore().getLatestSolidifiedBlockNum()
+            : latestSolidifiedBlockNumber);
         contractTriggerCapsule.setBlockHash(blockHash);
-
-        // Process synchronously to avoid race condition between async queue and
-        // reOrgContractTrigger cache clearing. Performance is not impacted because
-        // processTrigger() only enqueues events into the plugin's internal queue
-        // without blocking on actual I/O.
-        try {
-          contractTriggerCapsule.processTrigger();
-        } catch (Throwable throwable) {
-          logger.warn("Post contract trigger failed.", throwable);
-        }
+        processContractTrigger(contractTriggerCapsule);
       }
     }
+  }
+
+  private void postContractTriggers(List<ForkContractTriggerBlock> contractTriggerBlocks) {
+    for (ForkContractTriggerBlock triggerBlock : contractTriggerBlocks) {
+      BlockCapsule block = triggerBlock.getBlock();
+      if (block.isMerkleRootEmpty()) {
+        continue;
+      }
+      String blockHash = block.getBlockId().toString();
+      for (TransactionCapsule trx : block.getTransactions()) {
+        if (trx.getTrxTrace() == null) {
+          logger.warn("Contract trigger skipped, no trace for tx {} in block {}.",
+              trx.getTransactionId(), block.getNum());
+          continue;
+        }
+        postContractTrigger(trx.getTrxTrace(), false, blockHash,
+            triggerBlock.getLatestSolidifiedBlockNumber());
+      }
+    }
+  }
+
+  private boolean isContractTriggerEnabled() {
+    EventPluginLoader eventPluginLoader = EventPluginLoader.getInstance();
+    return eventPluginLoaded && eventPluginLoader.getVersion() == 0
+        && (eventPluginLoader.isContractEventTriggerEnable()
+        || eventPluginLoader.isContractLogTriggerEnable()
+        || eventPluginLoader.isSolidityEventTriggerEnable()
+        || eventPluginLoader.isSolidityLogTriggerEnable());
+  }
+
+  private void processContractTrigger(ContractTriggerCapsule contractTriggerCapsule) {
+    // Process synchronously to avoid race condition between async queue and
+    // reOrgContractTrigger cache clearing. Performance is not impacted because
+    // processTrigger() only enqueues events into the plugin's internal queue
+    // without blocking on actual I/O.
+    try {
+      contractTriggerCapsule.processTrigger();
+    } catch (Throwable throwable) {
+      logger.warn("Post contract trigger failed.", throwable);
+    }
+  }
+
+  // Keep one block reference instead of copying every per-log trigger while fork outcome is
+  // unknown; transaction traces remain on the applied block and are read after branch success.
+  @Getter
+  @AllArgsConstructor
+  private static class ForkContractTriggerBlock {
+
+    private final BlockCapsule block;
+    private final long latestSolidifiedBlockNumber;
   }
 
   private void prepareStoreFactory() {
