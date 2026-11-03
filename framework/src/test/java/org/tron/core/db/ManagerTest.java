@@ -5,8 +5,10 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -20,9 +22,18 @@ import static org.tron.protos.Protocol.Transaction.Result.contractResult.SUCCESS
 import com.beust.jcommander.internal.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonNull;
+import com.google.gson.JsonObject;
 import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
+import com.googlecode.jsonrpc4j.JsonRpcServer;
+import com.googlecode.jsonrpc4j.ProxyUtil;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -33,12 +44,14 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.Assert;
 import org.junit.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.MockedStatic;
 import org.tron.api.GrpcAPI;
 import org.tron.common.BaseMethodTest;
@@ -53,13 +66,19 @@ import org.tron.common.logsfilter.capsule.LogsFilterCapsule;
 import org.tron.common.logsfilter.capsule.TransactionLogTriggerCapsule;
 import org.tron.common.logsfilter.capsule.TriggerCapsule;
 import org.tron.common.logsfilter.queue.FilterCapsuleQueue;
+import org.tron.common.logsfilter.trigger.ContractEventTrigger;
 import org.tron.common.logsfilter.trigger.ContractLogTrigger;
+import org.tron.common.logsfilter.trigger.ContractTrigger;
 import org.tron.common.parameter.CommonParameter;
+import org.tron.common.runtime.ProgramResult;
 import org.tron.common.runtime.RuntimeImpl;
+import org.tron.common.runtime.TvmTestUtils;
+import org.tron.common.runtime.vm.LogInfo;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.Commons;
 import org.tron.common.utils.JsonUtil;
 import org.tron.common.utils.LocalWitnesses;
+import org.tron.common.utils.Pair;
 import org.tron.common.utils.PublicMethod;
 import org.tron.common.utils.ReflectUtils;
 import org.tron.common.utils.Sha256Hash;
@@ -107,6 +126,9 @@ import org.tron.core.exception.ValidateScheduleException;
 import org.tron.core.exception.ValidateSignatureException;
 import org.tron.core.exception.ZksnarkException;
 import org.tron.core.net.TronNetDelegate;
+import org.tron.core.services.jsonrpc.JsonRpcErrorResolver;
+import org.tron.core.services.jsonrpc.TronJsonRpc;
+import org.tron.core.services.jsonrpc.TronJsonRpcImpl;
 import org.tron.core.store.AccountStore;
 import org.tron.core.store.CodeStore;
 import org.tron.core.store.DynamicPropertiesStore;
@@ -114,6 +136,10 @@ import org.tron.core.store.ExchangeStore;
 import org.tron.core.store.ExchangeV2Store;
 import org.tron.core.store.IncrementalMerkleTreeStore;
 import org.tron.core.store.StoreFactory;
+import org.tron.core.vm.config.ConfigLoader;
+import org.tron.json.JSON;
+import org.tron.json.JSONArray;
+import org.tron.json.JSONObject;
 import org.tron.protos.Protocol;
 import org.tron.protos.Protocol.Account;
 import org.tron.protos.Protocol.Block;
@@ -128,6 +154,22 @@ import org.tron.protos.contract.ShieldContract;
 
 @Slf4j
 public class ManagerTest extends BaseMethodTest {
+
+  // Constructor emits Transfer(address(0), msg.sender, 1e10); see BlockEventGetTest.
+  private static final String TRANSFER_EVENT_CONTRACT_CODE =
+      "608060405234801561000f575f80fd5b50d3801561001b575f80fd5b50d28015610027575f80fd5b5033"
+          + "73ffffffffffffffffffffffffffffffffffffffff165f73ffffffffffffffffffffffffffffffffffff"
+          + "ffff167fddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef6402540be400"
+          + "60405161008a91906100e2565b60405180910390a36100fb565b5f819050919050565b5f819050919050"
+          + "565b5f819050919050565b5f6100cc6100c76100c284610097565b6100a9565b6100a0565b9050919050"
+          + "565b6100dc816100b2565b82525050565b5f6020820190506100f55f8301846100d3565b92915050565b"
+          + "603e806101075f395ff3fe60806040525f80fdfea26474726f6e582212200c57c973388f044038eff0e6"
+          + "474425b38037e75e66d6b3047647290605449c7764736f6c63430008140033";
+  private static final String TRANSFER_EVENT_CONTRACT_ABI =
+      "[{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"name\":\"from\","
+          + "\"type\":\"address\"},{\"indexed\":true,\"name\":\"to\",\"type\":\"address\"},"
+          + "{\"indexed\":false,\"name\":\"value\",\"type\":\"uint256\"}],"
+          + "\"name\":\"Transfer\",\"type\":\"event\"}]";
 
   private static final int SHIELDED_TRANS_IN_BLOCK_COUNTS = 1;
   private static ChainBaseManager chainManager;
@@ -1489,6 +1531,33 @@ public class ManagerTest extends BaseMethodTest {
     }
   }
 
+  @Test
+  public void postContractTriggersSkipsTransactionsWithoutTrace() throws Exception {
+    Field instanceField = EventPluginLoader.class.getDeclaredField("instance");
+    instanceField.setAccessible(true);
+    EventPluginLoader originalLoader = (EventPluginLoader) instanceField.get(null);
+    EventPluginLoader mockLoader = installMockLoader();
+    when(mockLoader.isContractLogTriggerEnable()).thenReturn(true);
+    when(mockLoader.isContractEventTriggerEnable()).thenReturn(false);
+    when(mockLoader.isSolidityLogTriggerEnable()).thenReturn(false);
+    when(mockLoader.isSolidityEventTriggerEnable()).thenReturn(false);
+    // A block loaded from the database after a restart has transactions but no traces; the
+    // reorg removal path must skip them instead of dereferencing a null trace.
+    BlockCapsule block = blockWithOneTransfer();
+    block.setMerkleRoot();
+    Assert.assertNull(block.getTransactions().get(0).getTrxTrace());
+    try {
+      Method method = Manager.class.getDeclaredMethod("postContractTriggers",
+          BlockCapsule.class, boolean.class, long.class);
+      method.setAccessible(true);
+      method.invoke(dbManager, block, true, 7L);
+      verify(mockLoader, never()).postContractLogTrigger(any(ContractLogTrigger.class));
+      verify(mockLoader, never()).postContractEventTrigger(any(ContractEventTrigger.class));
+    } finally {
+      restoreLoader(originalLoader);
+    }
+  }
+
   private EventPluginLoader installMockLoader() throws Exception {
     ReflectUtils.setFieldValue(dbManager, "eventPluginLoaded", true);
     EventPluginLoader mockLoader = mock(EventPluginLoader.class);
@@ -1504,6 +1573,21 @@ public class ManagerTest extends BaseMethodTest {
     instanceField.set(null, original);
     ReflectUtils.setFieldValue(dbManager, "eventPluginLoaded", false);
     dbManager.getTriggerCapsuleQueue().clear();
+  }
+
+  private void attachContractTrigger(BlockCapsule block, String uniqueId) {
+    TransactionCapsule transaction = spy(block.getTransactions().get(0));
+    ContractTrigger trigger = new ContractTrigger();
+    trigger.setLogInfo(new LogInfo(new byte[21], new ArrayList<>(), new byte[0]));
+    trigger.setBlockNumber(block.getNum());
+    trigger.setUniqueId(uniqueId);
+    ProgramResult runtimeResult = mock(ProgramResult.class);
+    when(runtimeResult.getTriggerList()).thenReturn(Arrays.asList(trigger));
+    TransactionTrace trace = mock(TransactionTrace.class);
+    when(trace.getRuntimeResult()).thenReturn(runtimeResult);
+    transaction.setTrxTrace(trace);
+    doNothing().when(transaction).setTrxTrace(any(TransactionTrace.class));
+    block.getTransactions().set(0, transaction);
   }
 
   private BlockCapsule blockWithOneTransfer() {
@@ -1572,13 +1656,319 @@ public class ManagerTest extends BaseMethodTest {
     List<KhaosDatabase.KhaosBlock> branch = new ArrayList<>();
     branch.add(new KhaosDatabase.KhaosBlock(block));
     try {
-      Method m = Manager.class.getDeclaredMethod("reApplyBlockEvents", List.class);
+      Method m = Manager.class.getDeclaredMethod("reApplyBlockEvents", List.class,
+          boolean.class);
       m.setAccessible(true);
-      m.invoke(dbManager, branch);
+      m.invoke(dbManager, branch, true);
       // forward block trigger emitted for the re-applied fork branch (removed=false)
       Assert.assertEquals(1, queue.size());
       Assert.assertFalse(((BlockLogTriggerCapsule) queue.poll())
           .getBlockLogTrigger().isRemoved());
+    } finally {
+      restoreLoader(originalLoader);
+    }
+  }
+
+  @Test
+  public void testPostForkBranchEventsRequestsExitOnReplayFailure() throws Exception {
+    Field instanceField = EventPluginLoader.class.getDeclaredField("instance");
+    instanceField.setAccessible(true);
+    EventPluginLoader originalLoader = (EventPluginLoader) instanceField.get(null);
+    EventPluginLoader mockLoader = installMockLoader();
+    when(mockLoader.getVersion()).thenReturn(0);
+    when(mockLoader.isBlockLogTriggerEnable()).thenThrow(new IllegalStateException("replay"));
+
+    BlockCapsule block = new BlockCapsule(1, chainManager.getGenesisBlockId(),
+        System.currentTimeMillis(), ByteString.EMPTY);
+    List<KhaosDatabase.KhaosBlock> branch = new ArrayList<>();
+    branch.add(new KhaosDatabase.KhaosBlock(block));
+    try (MockedStatic<ExitManager> exit = ExitManagerTestUtil.suppressExit()) {
+      Method m = Manager.class.getDeclaredMethod("postForkBranchEvents", List.class, List.class,
+          boolean.class);
+      m.setAccessible(true);
+      InvocationTargetException wrapped = Assert.assertThrows(InvocationTargetException.class,
+          () -> m.invoke(dbManager, branch, new ArrayList<>(), true));
+      TronError thrown = (TronError) wrapped.getCause();
+      Assert.assertEquals(TronError.ErrCode.EVENT_SUBSCRIBE_ERROR, thrown.getErrCode());
+      exit.verify(() -> ExitManager.logAndExit(thrown));
+      verify(mockLoader).isBlockLogTriggerEnable();
+    } finally {
+      restoreLoader(originalLoader);
+    }
+  }
+
+  @Test
+  public void pushBlockShouldPostContractTriggersOnlyAfterCommit() throws Exception {
+    Field instanceField = EventPluginLoader.class.getDeclaredField("instance");
+    instanceField.setAccessible(true);
+    EventPluginLoader originalLoader = (EventPluginLoader) instanceField.get(null);
+    EventPluginLoader mockLoader = installMockLoader();
+    when(mockLoader.isContractLogTriggerEnable()).thenReturn(true);
+    when(mockLoader.isContractEventTriggerEnable()).thenReturn(true);
+    when(mockLoader.isSolidityLogTriggerEnable()).thenReturn(false);
+    when(mockLoader.isSolidityEventTriggerEnable()).thenReturn(false);
+    List<ContractTrigger> contractEvents = new ArrayList<>();
+    doAnswer(invocation -> {
+      contractEvents.add(invocation.getArgument(0));
+      return null;
+    }).when(mockLoader).postContractLogTrigger(any(ContractLogTrigger.class));
+    doAnswer(invocation -> {
+      contractEvents.add(invocation.getArgument(0));
+      return null;
+    }).when(mockLoader).postContractEventTrigger(any(ContractEventTrigger.class));
+    BlockStore originalBlockStore = chainManager.getBlockStore();
+    try {
+      dbManager.stopRePushThread();
+      ConfigLoader.disable = false;
+      chainManager.getDynamicPropertiesStore().saveAllowTvmTransferTrc10(1);
+      chainManager.getDynamicPropertiesStore().saveAllowTvmConstantinople(1);
+      chainManager.getDynamicPropertiesStore().saveAllowTvmShangHai(1);
+      String key = PublicMethod.getRandomPrivateKey();
+      byte[] privateKey = ByteArray.fromHexString(key);
+      ByteString address = ByteString.copyFrom(ECKey.fromPrivate(privateKey).getAddress());
+      chainManager.getAccountStore().put(address.toByteArray(),
+          new AccountCapsule(Protocol.Account.newBuilder().setAddress(address).build()));
+      chainManager.getWitnessScheduleStore().saveActiveWitnesses(new ArrayList<>());
+      chainManager.addWitness(address);
+      chainManager.getWitnessStore().put(address.toByteArray(), new WitnessCapsule(address));
+      long time = 1533529947843L;
+      dbManager.pushBlock(new BlockCapsule(
+          blockGenerate.getSignedBlock(address, time, privateKey)));
+      Map<ByteString, String> keys = addTestWitnessAndAccount();
+      keys.put(address, key);
+      ECKey ownerKey = new ECKey(Utils.getRandom());
+      byte[] owner = ownerKey.getAddress();
+      chainManager.getAccountStore().put(owner, new AccountCapsule(Account.newBuilder()
+          .setAddress(ByteString.copyFrom(owner)).setBalance(10_000_000_000L).build()));
+      long base = chainManager.getHeadBlockNum();
+      BlockCapsule parent = createTestBlockCapsule(time + 3000, base + 1,
+          chainManager.getHeadBlockId().getByteString(), keys);
+      dbManager.pushBlock(parent);
+      long expiration = time + 1_000_000L;
+      TransactionCapsule failedTx = deployTransferEventContract(owner, ownerKey, parent,
+          expiration);
+      TransactionCapsule committedTx = deployTransferEventContract(owner, ownerKey, parent,
+          expiration + 1);
+      BlockCapsule failedBlock = new BlockCapsule(blockWithTransfer(time + 6000, base + 2,
+          parent.getBlockId().getByteString(), keys, failedTx).getData());
+      BlockCapsule committedBlock = new BlockCapsule(blockWithTransfer(time + 6001, base + 2,
+          parent.getBlockId().getByteString(), keys, committedTx).getData());
+
+      BlockStore failingBlockStore = spy(originalBlockStore);
+      // Fail after every transaction has executed, where the triggers used to be posted from.
+      doAnswer(invocation -> {
+        invocation.callRealMethod();
+        BlockCapsule written = invocation.getArgument(1);
+        if (written.getBlockId().equals(failedBlock.getBlockId())) {
+          throw new IllegalStateException("injected block write failure");
+        }
+        return null;
+      }).when(failingBlockStore).put(any(byte[].class), any(BlockCapsule.class));
+      ReflectUtils.setFieldValue(chainManager, "blockStore", failingBlockStore);
+
+      assertThrows(IllegalStateException.class, () -> dbManager.pushBlock(failedBlock));
+      Assert.assertTrue("failed block must not leak contract triggers",
+          contractEvents.isEmpty());
+
+      long solidifiedBeforeApply = chainManager.getDynamicPropertiesStore()
+          .getLatestSolidifiedBlockNum();
+      dbManager.pushBlock(committedBlock);
+      Assert.assertEquals(1, contractEvents.size());
+      ContractTrigger posted = contractEvents.get(0);
+      Assert.assertEquals(committedTx.getTransactionId().toString(), posted.getTransactionId());
+      Assert.assertFalse(posted.isRemoved());
+      Assert.assertEquals(committedBlock.getBlockId().toString(), posted.getBlockHash());
+      Assert.assertEquals(solidifiedBeforeApply, posted.getLatestSolidifiedBlockNumber());
+    } finally {
+      ReflectUtils.setFieldValue(chainManager, "blockStore", originalBlockStore);
+      restoreLoader(originalLoader);
+    }
+  }
+
+  @Test
+  public void switchForkShouldReemitRestoredPrefixEventsWhenRestoreFails() throws Exception {
+    boolean jsonRpcEnabled = CommonParameter.getInstance().jsonRpcHttpFullNodeEnable;
+    Field instanceField = EventPluginLoader.class.getDeclaredField("instance");
+    instanceField.setAccessible(true);
+    EventPluginLoader originalLoader = (EventPluginLoader) instanceField.get(null);
+    EventPluginLoader mockLoader = installMockLoader();
+    when(mockLoader.isContractLogTriggerEnable()).thenReturn(true);
+    when(mockLoader.isContractEventTriggerEnable()).thenReturn(true);
+    when(mockLoader.isSolidityLogTriggerEnable()).thenReturn(false);
+    when(mockLoader.isSolidityEventTriggerEnable()).thenReturn(false);
+    List<ContractTrigger> contractEvents = new ArrayList<>();
+    doAnswer(invocation -> {
+      contractEvents.add(invocation.getArgument(0));
+      return null;
+    }).when(mockLoader).postContractLogTrigger(any(ContractLogTrigger.class));
+    doAnswer(invocation -> {
+      contractEvents.add(invocation.getArgument(0));
+      return null;
+    }).when(mockLoader).postContractEventTrigger(any(ContractEventTrigger.class));
+    BlockStore originalBlockStore = chainManager.getBlockStore();
+    try {
+      CommonParameter.getInstance().jsonRpcHttpFullNodeEnable = true;
+      dbManager.stopRePushThread();
+      ConfigLoader.disable = false;
+      chainManager.getDynamicPropertiesStore().saveAllowTvmTransferTrc10(1);
+      chainManager.getDynamicPropertiesStore().saveAllowTvmConstantinople(1);
+      chainManager.getDynamicPropertiesStore().saveAllowTvmShangHai(1);
+      String key = PublicMethod.getRandomPrivateKey();
+      byte[] privateKey = ByteArray.fromHexString(key);
+      ByteString address = ByteString.copyFrom(ECKey.fromPrivate(privateKey).getAddress());
+      chainManager.getAccountStore().put(address.toByteArray(),
+          new AccountCapsule(Protocol.Account.newBuilder().setAddress(address).build()));
+      chainManager.getWitnessScheduleStore().saveActiveWitnesses(new ArrayList<>());
+      chainManager.addWitness(address);
+      chainManager.getWitnessStore().put(address.toByteArray(), new WitnessCapsule(address));
+      long time = 1533529947843L;
+      dbManager.pushBlock(new BlockCapsule(
+          blockGenerate.getSignedBlock(address, time, privateKey)));
+      Map<ByteString, String> keys = addTestWitnessAndAccount();
+      keys.put(address, key);
+      ECKey ownerKey = new ECKey(Utils.getRandom());
+      byte[] owner = ownerKey.getAddress();
+      chainManager.getAccountStore().put(owner, new AccountCapsule(Account.newBuilder()
+          .setAddress(ByteString.copyFrom(owner)).setBalance(10_000_000_000L).build()));
+      long base = chainManager.getHeadBlockNum();
+      BlockCapsule parent = createTestBlockCapsule(time + 3000, base + 1,
+          chainManager.getHeadBlockId().getByteString(), keys);
+      dbManager.pushBlock(parent);
+      long expiration = time + 1_000_000L;
+      // Build every block while the head is still `parent`: blockWithTransfer picks the witness
+      // from the current head, and only against `parent` does that match the slot each block is
+      // later validated against during the switch (see DposSlot.getScheduledWitness).
+      TransactionCapsule oldTxA = deployTransferEventContract(owner, ownerKey, parent,
+          expiration);
+      TransactionCapsule oldTxB = deployTransferEventContract(owner, ownerKey, parent,
+          expiration + 1);
+      BlockCapsule oldA = new BlockCapsule(blockWithTransfer(time + 6000, base + 2,
+          parent.getBlockId().getByteString(), keys, oldTxA).getData());
+      BlockCapsule oldB = new BlockCapsule(blockWithTransfer(time + 9000, base + 3,
+          oldA.getBlockId().getByteString(), keys, oldTxB).getData());
+      BlockCapsule fork1 = new BlockCapsule(blockWithTransfer(time + 6000, base + 2,
+          parent.getBlockId().getByteString(), keys,
+          deployTransferEventContract(owner, ownerKey, parent, expiration + 2)).getData());
+      BlockCapsule fork2 = new BlockCapsule(blockWithTransfer(time + 9000, base + 3,
+          fork1.getBlockId().getByteString(), keys,
+          deployTransferEventContract(owner, ownerKey, parent, expiration + 3)).getData());
+      BlockCapsule newHead = new BlockCapsule(blockWithTransfer(time + 12000, base + 4,
+          fork2.getBlockId().getByteString(), keys,
+          deployTransferEventContract(owner, ownerKey, parent, expiration + 4)).getData());
+      dbManager.pushBlock(oldA);
+      dbManager.pushBlock(oldB);
+      FilterCapsuleQueue eventQueue = context.getBean(FilterCapsuleQueue.class);
+      while (eventQueue.poll(0, TimeUnit.MILLISECONDS) != null) {
+        // Keep only this fork attempt's notifications.
+      }
+      contractEvents.clear();
+
+      dbManager.pushBlock(fork1);
+      dbManager.pushBlock(fork2);
+
+      RuntimeException switchFailure = new IllegalStateException("injected fork write failure");
+      RuntimeException restoreFailure = new IllegalStateException("injected restore failure");
+      BlockStore failingBlockStore = spy(originalBlockStore);
+      // The spy is installed after oldA/oldB were pushed, so the only writes it sees are the
+      // switch (newHead) and the restore (oldA, then oldB). Fail the switch at newHead and the
+      // restore at oldB, leaving oldA restored as the committed prefix.
+      doAnswer(invocation -> {
+        invocation.callRealMethod();
+        BlockCapsule written = invocation.getArgument(1);
+        if (written.getBlockId().equals(newHead.getBlockId())) {
+          throw switchFailure;
+        }
+        if (written.getBlockId().equals(oldB.getBlockId())) {
+          throw restoreFailure;
+        }
+        return null;
+      }).when(failingBlockStore).put(any(byte[].class), any(BlockCapsule.class));
+      ReflectUtils.setFieldValue(chainManager, "blockStore", failingBlockStore);
+
+      RuntimeException thrown = assertThrows(RuntimeException.class,
+          () -> dbManager.pushBlock(newHead));
+      Assert.assertSame(restoreFailure, thrown);
+      Assert.assertEquals(oldA.getBlockId(), chainManager.getHeadBlockId());
+
+      List<String> expected = Arrays.asList(
+          oldTxB.getTransactionId().toString() + ":removed",
+          oldTxA.getTransactionId().toString() + ":removed",
+          oldTxA.getTransactionId().toString() + ":forward");
+      List<String> actual = new ArrayList<>();
+      for (ContractTrigger event : contractEvents) {
+        actual.add(event.getTransactionId() + (event.isRemoved() ? ":removed" : ":forward"));
+      }
+      Assert.assertEquals("restored prefix is withdrawn then republished, nothing else",
+          expected, actual);
+      Assert.assertTrue(hasLogsFilterCapsule(eventQueue, oldA, true));
+      Assert.assertTrue("restored prefix logs are republished",
+          hasLogsFilterCapsule(eventQueue, oldA, false));
+      Assert.assertFalse("restored prefix block filter is not republished",
+          hasBlockFilterCapsule(eventQueue, oldA));
+      Assert.assertTrue(hasLogsFilterCapsule(eventQueue, oldB, true));
+      Assert.assertFalse("block whose restore failed is not republished",
+          hasLogsFilterCapsule(eventQueue, oldB, false));
+      Assert.assertFalse(hasLogsFilterCapsule(eventQueue, fork1, false));
+      Assert.assertFalse(hasLogsFilterCapsule(eventQueue, fork2, false));
+    } finally {
+      ReflectUtils.setFieldValue(chainManager, "blockStore", originalBlockStore);
+      restoreLoader(originalLoader);
+      CommonParameter.getInstance().jsonRpcHttpFullNodeEnable = jsonRpcEnabled;
+    }
+  }
+
+  private TransactionCapsule deployTransferEventContract(byte[] owner, ECKey ownerKey,
+      BlockCapsule refBlock, long expiration) {
+    Transaction deploy = TvmTestUtils.generateDeploySmartContractAndGetTransaction(
+        "TransferEvent", owner, TRANSFER_EVENT_CONTRACT_ABI, TRANSFER_EVENT_CONTRACT_CODE,
+        0, 1_000_000_000L, 100, null, 1);
+    // The witness-signed block path checks the declared result against the receipt.
+    deploy = deploy.toBuilder().addRet(Transaction.Result.newBuilder()
+        .setContractRetValue(Transaction.Result.contractResult.SUCCESS_VALUE).build()).build();
+    TransactionCapsule tx = new TransactionCapsule(deploy);
+    tx.setReference(refBlock.getNum(), refBlock.getBlockId().getBytes());
+    tx.setExpiration(expiration);
+    tx.sign(ownerKey.getPrivKeyBytes());
+    return tx;
+  }
+
+  @Test
+  public void testPostContractTriggersUsesAppliedBlockTraceAndCapturedSolidifiedHeight()
+      throws Exception {
+    Field instanceField = EventPluginLoader.class.getDeclaredField("instance");
+    instanceField.setAccessible(true);
+    EventPluginLoader originalLoader = (EventPluginLoader) instanceField.get(null);
+    EventPluginLoader mockLoader = installMockLoader();
+    when(mockLoader.isContractLogTriggerEnable()).thenReturn(true);
+    when(mockLoader.isContractEventTriggerEnable()).thenReturn(false);
+    when(mockLoader.isSolidityLogTriggerEnable()).thenReturn(false);
+    when(mockLoader.isSolidityEventTriggerEnable()).thenReturn(false);
+
+    BlockCapsule block = blockWithOneTransfer();
+    block.setMerkleRoot();
+    TransactionCapsule transaction = block.getTransactions().get(0);
+    ContractTrigger contractTrigger = new ContractTrigger();
+    contractTrigger.setLogInfo(new LogInfo(new byte[21], new ArrayList<>(), new byte[0]));
+    contractTrigger.setBlockNumber(block.getNum());
+    contractTrigger.setUniqueId("txid_0");
+    ProgramResult runtimeResult = mock(ProgramResult.class);
+    when(runtimeResult.getTriggerList()).thenReturn(Arrays.asList(contractTrigger));
+    TransactionTrace trace = mock(TransactionTrace.class);
+    when(trace.getRuntimeResult()).thenReturn(runtimeResult);
+    transaction.setTrxTrace(trace);
+
+    try {
+      Method method = Manager.class.getDeclaredMethod("postContractTriggers", List.class);
+      method.setAccessible(true);
+      method.invoke(dbManager, Arrays.asList(new Pair<>(block, 77L)));
+
+      ArgumentCaptor<ContractLogTrigger> triggerCaptor =
+          ArgumentCaptor.forClass(ContractLogTrigger.class);
+      verify(mockLoader).postContractLogTrigger(triggerCaptor.capture());
+      ContractLogTrigger posted = triggerCaptor.getValue();
+      Assert.assertFalse(posted.isRemoved());
+      Assert.assertEquals(77L, posted.getLatestSolidifiedBlockNumber());
+      Assert.assertEquals(block.getBlockId().toString(), posted.getBlockHash());
     } finally {
       restoreLoader(originalLoader);
     }
@@ -1939,13 +2329,53 @@ public class ManagerTest extends BaseMethodTest {
     NONE, PREFIX, HEAD
   }
 
+  @Test
+  public void switchForkShouldReemitOldBranchEventsAfterFailedCandidateSwitch()
+      throws Exception {
+    boolean jsonRpcEnabled = CommonParameter.getInstance().jsonRpcHttpFullNodeEnable;
+    Field instanceField = EventPluginLoader.class.getDeclaredField("instance");
+    instanceField.setAccessible(true);
+    EventPluginLoader originalLoader = (EventPluginLoader) instanceField.get(null);
+    EventPluginLoader mockLoader = installMockLoader();
+    when(mockLoader.isContractLogTriggerEnable()).thenReturn(true);
+    when(mockLoader.isContractEventTriggerEnable()).thenReturn(false);
+    when(mockLoader.isSolidityLogTriggerEnable()).thenReturn(false);
+    when(mockLoader.isSolidityEventTriggerEnable()).thenReturn(false);
+    List<ContractLogTrigger> contractEvents = new ArrayList<>();
+    doAnswer(invocation -> {
+      contractEvents.add(invocation.getArgument(0));
+      return null;
+    }).when(mockLoader).postContractLogTrigger(any(ContractLogTrigger.class));
+    try {
+      checkForkRecovery(false, false, ForkRetryFailure.NONE, true, contractEvents);
+    } finally {
+      restoreLoader(originalLoader);
+      CommonParameter.getInstance().jsonRpcHttpFullNodeEnable = jsonRpcEnabled;
+    }
+  }
+
+  private void checkForkRecovery(boolean failRestore, boolean retryOldHead,
+      ForkRetryFailure retryFailure) throws Exception {
+    checkForkRecovery(failRestore, retryOldHead, retryFailure, false);
+  }
+
+  private void checkForkRecovery(boolean failRestore, boolean retryOldHead,
+      ForkRetryFailure retryFailure, boolean assertReorgEvents) throws Exception {
+    checkForkRecovery(failRestore, retryOldHead, retryFailure, assertReorgEvents, null);
+  }
+
   private void checkForkRecovery(boolean failRestore, boolean retryOldHead) throws Exception {
     checkForkRecovery(failRestore, retryOldHead, ForkRetryFailure.NONE);
   }
 
   private void checkForkRecovery(boolean failRestore, boolean retryOldHead,
-      ForkRetryFailure retryFailure) throws Exception {
+      ForkRetryFailure retryFailure, boolean assertReorgEvents,
+      List<ContractLogTrigger> contractEvents) throws Exception {
     // Assert committed chain state without concurrently replaying pending transactions.
+    boolean jsonRpcEnabled = CommonParameter.getInstance().jsonRpcHttpFullNodeEnable;
+    if (assertReorgEvents) {
+      CommonParameter.getInstance().jsonRpcHttpFullNodeEnable = true;
+    }
     dbManager.stopRePushThread();
     String key = PublicMethod.getRandomPrivateKey();
     byte[] privateKey = ByteArray.fromHexString(key);
@@ -1984,14 +2414,43 @@ public class ManagerTest extends BaseMethodTest {
     // Decode signed blocks as on the receive path; do not bypass transaction verification.
     BlockCapsule oldHead = new BlockCapsule(blockWithTransfer(time + 6000, base + 2,
         parent.getBlockId().getByteString(), keys, oldTx).getData());
+    if (assertReorgEvents) {
+      attachContractTrigger(oldHead, "old-head-event");
+    }
     dbManager.pushBlock(oldHead);
     long oldOwnerBalance = chainManager.getAccountStore().get(owner).getBalance();
     Assert.assertEquals(11L, chainManager.getAccountStore().get(receiver).getBalance());
+    FilterCapsuleQueue eventQueue = assertReorgEvents
+        ? context.getBean(FilterCapsuleQueue.class) : null;
+    JsonRpcServer jsonRpcServer = null;
+    String jsonRpcFilterId = null;
+    if (assertReorgEvents) {
+      while (eventQueue.poll(0, TimeUnit.MILLISECONDS) != null) {
+        // Discard events from the setup blocks; keep only this fork attempt's notifications.
+      }
+      jsonRpcServer = newJsonRpcServer(context.getBean(TronJsonRpcImpl.class));
+      JSONObject filterResponse = handleJsonRpc(jsonRpcServer, "eth_newFilter",
+          jsonParams(new JsonObject()));
+      Assert.assertFalse(filterResponse.toString(), filterResponse.containsKey("error"));
+      jsonRpcFilterId = filterResponse.getString("result");
+      Assert.assertNotNull(jsonRpcFilterId);
+    }
     BlockCapsule fork = new BlockCapsule(blockWithTransfer(time + 6001, base + 2,
         parent.getBlockId().getByteString(), keys, forkTx).getData());
     dbManager.pushBlock(fork);
     BlockCapsule newHead = new BlockCapsule(blockWithTransfer(time + 9000, base + 3,
         fork.getBlockId().getByteString(), keys, newHeadTx).getData());
+    if (assertReorgEvents) {
+      // Test-only injection: `fork` is a plain transfer block that never ran the VM, so a mock
+      // trace is attached and the KhaosBlock is committed by hand to keep it. In production
+      // KhaosBlock.commit runs only after the block's database session commits.
+      KhaosDatabase.KhaosBlock forkKhaosBlock = chainManager.getKhaosDb().getMiniStore()
+          .getByHash(fork.getBlockId());
+      BlockCapsule cachedFork = forkKhaosBlock.getBlk();
+      attachContractTrigger(cachedFork, "failed-fork-event");
+      forkKhaosBlock.commit(cachedFork);
+      attachContractTrigger(newHead, "failed-head-event");
+    }
     RuntimeException failure = new IllegalStateException("injected fork block write failure");
     RuntimeException restoreFailure =
         new IllegalStateException("injected old block write failure");
@@ -2025,7 +2484,6 @@ public class ManagerTest extends BaseMethodTest {
       return null;
     }).when(failingBlockStore).put(any(byte[].class), any(BlockCapsule.class));
     ReflectUtils.setFieldValue(chainManager, "blockStore", failingBlockStore);
-    boolean jsonRpcEnabled = CommonParameter.getInstance().jsonRpcHttpFullNodeEnable;
     try {
       RuntimeException thrown = assertThrows(RuntimeException.class,
           () -> dbManager.pushBlock(newHead));
@@ -2064,6 +2522,28 @@ public class ManagerTest extends BaseMethodTest {
         Assert.assertTrue(chainManager.getTransactionStore()
             .has(oldTx.getTransactionId().getBytes()));
         retry = new BlockCapsule(newHead.getData());
+        if (assertReorgEvents) {
+          Assert.assertTrue("failed switch removes old-head logs",
+              hasLogsFilterCapsule(eventQueue, oldHead, true));
+          Assert.assertTrue("restoration re-emits old-head logs",
+              hasLogsFilterCapsule(eventQueue, oldHead, false));
+          Assert.assertFalse("restoration must not republish the old-head block filter",
+              hasBlockFilterCapsule(eventQueue, oldHead));
+          Assert.assertFalse("failed candidate prefix is not emitted",
+              hasLogsFilterCapsule(eventQueue, fork, false));
+          Assert.assertFalse("failed candidate head is not emitted",
+              hasLogsFilterCapsule(eventQueue, newHead, false));
+          Assert.assertNotNull(contractEvents);
+          Assert.assertEquals("old-head forward, removal and restoration are the only "
+              + "contract events", 3, contractEvents.size());
+          for (ContractLogTrigger event : contractEvents) {
+            Assert.assertEquals("old-head-event", event.getUniqueId());
+          }
+          Assert.assertFalse(contractEvents.get(0).isRemoved());
+          Assert.assertTrue(contractEvents.get(1).isRemoved());
+          Assert.assertFalse(contractEvents.get(2).isRemoved());
+          assertJsonRpcFilterChanges(jsonRpcServer, jsonRpcFilterId, eventQueue, oldHead);
+        }
       }
 
       if (retryFailure != ForkRetryFailure.NONE) {
@@ -2209,6 +2689,83 @@ public class ManagerTest extends BaseMethodTest {
     blockCapsule.setMerkleRoot();
     blockCapsule.sign(ByteArray.fromHexString(keys.get(witnessAddress)));
     return blockCapsule;
+  }
+
+  private void assertJsonRpcFilterChanges(JsonRpcServer server, String filterId,
+      FilterCapsuleQueue queue, BlockCapsule restoredBlock) throws Exception {
+    List<LogsFilterCapsule> restoredBlockEvents = new ArrayList<>();
+    Object queued;
+    while ((queued = queue.poll(0, TimeUnit.MILLISECONDS)) != null) {
+      if (queued instanceof LogsFilterCapsule) {
+        LogsFilterCapsule logs = (LogsFilterCapsule) queued;
+        if (restoredBlock.getBlockId().toString().equals(logs.getBlockHash())) {
+          restoredBlockEvents.add(logs);
+        }
+      }
+    }
+
+    Assert.assertEquals("old branch removal and restoration should both be queued",
+        2, restoredBlockEvents.size());
+    TronJsonRpcImpl tronJsonRpc = context.getBean(TronJsonRpcImpl.class);
+    for (LogsFilterCapsule logs : restoredBlockEvents) {
+      List<Protocol.TransactionInfo> transactionInfos = new ArrayList<>();
+      Protocol.TransactionInfo.Log syntheticLog = Protocol.TransactionInfo.Log.newBuilder()
+          .setAddress(ByteString.copyFrom(new byte[20])).build();
+      for (Protocol.TransactionInfo transactionInfo : logs.getTxInfoList()) {
+        transactionInfos.add(transactionInfo.toBuilder().addLog(syntheticLog).build());
+      }
+      Assert.assertFalse("test block must contain a transaction", transactionInfos.isEmpty());
+      logs.setTxInfoList(transactionInfos);
+      tronJsonRpc.handleLogsFilter(logs);
+    }
+
+    JSONObject response = handleJsonRpc(server, "eth_getFilterChanges", jsonParams(filterId));
+    Assert.assertFalse(response.toString(), response.containsKey("error"));
+    JSONArray changes = response.getJSONArray("result");
+    Assert.assertEquals(2, changes.size());
+    Assert.assertTrue("first change withdraws the old log",
+        changes.getJSONObject(0).getBoolean("removed"));
+    Assert.assertFalse("second change restores the old log",
+        changes.getJSONObject(1).getBoolean("removed"));
+  }
+
+  private JsonRpcServer newJsonRpcServer(TronJsonRpcImpl tronJsonRpc) {
+    Object service = ProxyUtil.createCompositeServiceProxy(
+        Thread.currentThread().getContextClassLoader(),
+        new Object[] {tronJsonRpc}, new Class[] {TronJsonRpc.class}, true);
+    JsonRpcServer server = new JsonRpcServer(service);
+    server.setErrorResolver(JsonRpcErrorResolver.INSTANCE);
+    server.setShouldLogInvocationErrors(false);
+    return server;
+  }
+
+  private JSONObject handleJsonRpc(JsonRpcServer server, String method, JsonArray params)
+      throws Exception {
+    JsonObject request = new JsonObject();
+    request.addProperty("jsonrpc", "2.0");
+    request.addProperty("method", method);
+    request.add("params", params);
+    request.addProperty("id", 1);
+    ByteArrayOutputStream output = new ByteArrayOutputStream();
+    server.handleRequest(new ByteArrayInputStream(request.toString().getBytes("UTF-8")), output);
+    return JSON.parseObject(output.toString("UTF-8"));
+  }
+
+  private JsonArray jsonParams(Object... values) {
+    JsonArray params = new JsonArray();
+    for (Object value : values) {
+      if (value instanceof JsonElement) {
+        params.add((JsonElement) value);
+      } else if (value instanceof String) {
+        params.add((String) value);
+      } else if (value == null) {
+        params.add(JsonNull.INSTANCE);
+      } else {
+        throw new IllegalArgumentException("unsupported JSON parameter type: "
+            + value.getClass());
+      }
+    }
+    return params;
   }
 
   private boolean hasLogsFilterCapsule(FilterCapsuleQueue queue, BlockCapsule b,
