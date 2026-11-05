@@ -6,6 +6,7 @@ import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
@@ -120,10 +121,11 @@ public class ManagerMockTest {
       mockedStatic.when(() -> TransactionUtil.buildTransactionInfoInstance(
           eq(trxCap), eq(blockCapMock), any(TransactionTrace.class)))
           .thenReturn(new TransactionInfoCapsule(transactionInfo));
-      when(blockCapMock.isMerkleRootEmpty()).thenAnswer(invocation -> {
+      // Push processing past 100 ms from the last block-scoped call before the cost check.
+      doAnswer(invocation -> {
         Thread.sleep(110);
-        return true;
-      });
+        return null;
+      }).when(balanceTraceStoreMock).resetCurrentTransactionTrace();
 
       when(chainBaseManagerMock.getBalanceTraceStore()).thenReturn(balanceTraceStoreMock);
       when(chainBaseManagerMock.getAccountStore()).thenReturn(mock(AccountStore.class));
