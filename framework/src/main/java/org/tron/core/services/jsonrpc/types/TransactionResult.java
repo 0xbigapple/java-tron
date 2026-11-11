@@ -16,6 +16,7 @@ import org.tron.protos.Protocol;
 import org.tron.protos.Protocol.Transaction;
 import org.tron.protos.Protocol.Transaction.Contract;
 import org.tron.protos.Protocol.Transaction.Contract.ContractType;
+import org.tron.protos.contract.SmartContractOuterClass.CreateSmartContract;
 import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
 
 @JsonPropertyOrder(alphabetic = true)
@@ -82,6 +83,15 @@ public class TransactionResult {
           TriggerSmartContract triggerSmartContract = contract.getParameter()
               .unpack(TriggerSmartContract.class);
           data = ByteArray.toJsonHex(triggerSmartContract.getData().toByteArray());
+        } catch (Exception e) {
+          data = "0x";
+        }
+      } else if (contract.getType() == ContractType.CreateSmartContract) {
+        try {
+          CreateSmartContract createSmartContract = contract.getParameter()
+              .unpack(CreateSmartContract.class);
+          data = ByteArray.toJsonHex(
+              createSmartContract.getNewContract().getBytecode().toByteArray());
         } catch (Exception e) {
           data = "0x";
         }

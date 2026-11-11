@@ -94,6 +94,8 @@ import org.tron.protos.Protocol.Transaction;
 import org.tron.protos.Protocol.Transaction.Contract.ContractType;
 import org.tron.protos.Protocol.Transaction.Result.contractResult;
 import org.tron.protos.contract.BalanceContract.TransferContract;
+import org.tron.protos.contract.SmartContractOuterClass.CreateSmartContract;
+import org.tron.protos.contract.SmartContractOuterClass.SmartContract;
 
 
 @Slf4j
@@ -2104,6 +2106,78 @@ public class JsonrpcServiceTest extends BaseTest {
       }
     } finally {
       fullNodeJsonRpcHttpService.stop();
+    }
+  }
+
+  @Test
+  public void testCreateSmartContractInput() throws Exception {
+    // creation code followed by the ABI-encoded constructor argument 42
+    String bytecode = "6080604052"
+        + "000000000000000000000000000000000000000000000000000000000000002a";
+    CreateSmartContract contract = CreateSmartContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setNewContract(SmartContract.newBuilder()
+            .setBytecode(ByteString.copyFrom(ByteArray.fromHexString(bytecode))))
+        .build();
+    BlockCapsule block = new BlockCapsule(LATEST_BLOCK_NUM - 1, Sha256Hash.wrap(
+        ByteString.copyFrom(ByteArray.fromHexString(
+            "0304f784e4e7bae517bcab94c3e0c9214fb4ac7ff9d7d5a937d1f40031f87b81"))), 1500000,
+        ByteString.copyFromUtf8("testAddress"));
+    TransactionCapsule transaction =
+        new TransactionCapsule(contract, ContractType.CreateSmartContract);
+    transaction.setBlockNum(block.getNum());
+    transaction.setTimestamp(block.getTimeStamp());
+    block.addTransaction(transaction);
+
+    TransactionInfoCapsule transactionInfo = new TransactionInfoCapsule();
+    transactionInfo.setId(transaction.getTransactionId().getBytes());
+    transactionInfo.setBlockNumber(block.getNum());
+    transactionInfo.setBlockTimeStamp(block.getTimeStamp());
+    TransactionRetCapsule transactionRet = new TransactionRetCapsule();
+    transactionRet.addTransactionInfo(transactionInfo.getInstance());
+
+    byte[] blockKey = block.getBlockId().getBytes();
+    byte[] transactionKey = transaction.getTransactionId().getBytes();
+    byte[] retKey = ByteArray.fromLong(block.getNum());
+    dbManager.getBlockIndexStore().put(block.getBlockId());
+    dbManager.getBlockStore().put(blockKey, block);
+    dbManager.getTransactionStore().put(transactionKey, transaction);
+    dbManager.getTransactionRetStore().put(retKey, transactionRet);
+
+    try {
+      String txId = ByteArray.toJsonHex(transactionKey);
+      String blockHash = ByteArray.toJsonHex(blockKey);
+      String blockNum = ByteArray.toJsonHex(block.getNum());
+      String expected = "0x" + bytecode;
+      JsonRpcServer server = newJsonRpcServer();
+
+      JSONObject[] transactionResponses = {
+          handleJsonRpc(server, "eth_getTransactionByHash", jsonParams(txId)),
+          handleJsonRpc(server, "eth_getTransactionByBlockHashAndIndex",
+              jsonParams(blockHash, "0x0")),
+          handleJsonRpc(server, "eth_getTransactionByBlockNumberAndIndex",
+              jsonParams(blockNum, "0x0"))};
+      for (JSONObject response : transactionResponses) {
+        JSONObject result = response.getJSONObject("result");
+        Assert.assertNotNull(response.toJSONString(), result);
+        Assert.assertEquals(response.toJSONString(), expected, result.getString("input"));
+        Assert.assertNull(response.toJSONString(), result.get("to"));
+      }
+
+      JSONObject[] blockResponses = {
+          handleJsonRpc(server, "eth_getBlockByHash", jsonParams(blockHash, true)),
+          handleJsonRpc(server, "eth_getBlockByNumber", jsonParams(blockNum, true))};
+      for (JSONObject response : blockResponses) {
+        JSONObject result = response.getJSONObject("result");
+        Assert.assertNotNull(response.toJSONString(), result);
+        Assert.assertEquals(response.toJSONString(), expected,
+            result.getJSONArray("transactions").getJSONObject(0).getString("input"));
+      }
+    } finally {
+      dbManager.getTransactionRetStore().delete(retKey);
+      dbManager.getTransactionStore().delete(transactionKey);
+      dbManager.getBlockStore().delete(blockKey);
+      dbManager.getBlockIndexStore().delete(retKey);
     }
   }
 

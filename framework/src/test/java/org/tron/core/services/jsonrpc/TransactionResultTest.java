@@ -79,4 +79,52 @@ public class TransactionResultTest extends BaseTest {
     assertQuantity(transactionResult.getNonce());
   }
 
+  private Protocol.Transaction createSmartContractTransaction(String bytecode) {
+    SmartContractOuterClass.CreateSmartContract contract =
+        SmartContractOuterClass.CreateSmartContract.newBuilder()
+            .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+            .setNewContract(SmartContractOuterClass.SmartContract.newBuilder()
+                .setBytecode(ByteString.copyFrom(ByteArray.fromHexString(bytecode))))
+            .build();
+    return new TransactionCapsule(contract,
+        Protocol.Transaction.Contract.ContractType.CreateSmartContract).getInstance();
+  }
+
+  @Test
+  public void testInputOfCreateSmartContract() {
+    // creation code followed by the ABI-encoded constructor argument 42
+    String bytecode = "6080604052"
+        + "000000000000000000000000000000000000000000000000000000000000002a";
+    Protocol.Transaction transaction = createSmartContractTransaction(bytecode);
+
+    Assert.assertEquals("0x" + bytecode, new TransactionResult(transaction, wallet).getInput());
+    Assert.assertNull(new TransactionResult(transaction, wallet).getTo());
+
+    BlockCapsule blockCapsule = new BlockCapsule(Protocol.Block.newBuilder().setBlockHeader(
+        Protocol.BlockHeader.newBuilder().setRawData(Protocol.BlockHeader.raw.newBuilder()
+            .setNumber(9))).addTransactions(transaction).build());
+    Assert.assertEquals("0x" + bytecode,
+        new TransactionResult(blockCapsule, 0, transaction, 100, 1, wallet).getInput());
+  }
+
+  @Test
+  public void testInputOfCreateSmartContractWithoutBytecode() {
+    Assert.assertEquals("0x",
+        new TransactionResult(createSmartContractTransaction(""), wallet).getInput());
+  }
+
+  @Test
+  public void testInputOfTriggerSmartContract() {
+    SmartContractOuterClass.TriggerSmartContract contract =
+        SmartContractOuterClass.TriggerSmartContract.newBuilder()
+            .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+            .setContractAddress(ByteString.copyFrom(ByteArray.fromHexString(CONTRACT_ADDRESS)))
+            .setData(ByteString.copyFrom(ByteArray.fromHexString("a9059cbb")))
+            .build();
+    Protocol.Transaction transaction = new TransactionCapsule(contract,
+        Protocol.Transaction.Contract.ContractType.TriggerSmartContract).getInstance();
+
+    Assert.assertEquals("0xa9059cbb", new TransactionResult(transaction, wallet).getInput());
+  }
+
 }
