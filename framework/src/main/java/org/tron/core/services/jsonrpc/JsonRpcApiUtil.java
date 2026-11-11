@@ -4,7 +4,6 @@ import com.google.common.base.Throwables;
 import com.google.common.primitives.Longs;
 import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
-import java.math.BigInteger;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.List;
@@ -537,19 +536,20 @@ public class JsonRpcApiUtil {
     }
   }
 
+  public static final String QUANTITY_REGEX = "^0x[0-9a-fA-F]+$";
+
   public static long parseQuantityValue(String value) throws JsonRpcInvalidParamsException {
     long callValue = 0L;
 
     if (StringUtils.isNotEmpty(value)) {
+      if (!Pattern.matches(QUANTITY_REGEX, value)) {
+        throw new JsonRpcInvalidParamsException("invalid param value: invalid hex number");
+      }
       try {
         callValue = ByteArray.jsonHexToLong(value);
       } catch (Exception e) {
         throw new JsonRpcInvalidParamsException("invalid param value: invalid hex number");
       }
-    }
-    // QUANTITY is unsigned; reject a signed ("0x-..") value instead of returning a negative.
-    if (callValue < 0) {
-      throw new JsonRpcInvalidParamsException("invalid param value: negative");
     }
     return callValue;
   }
@@ -658,28 +658,23 @@ public class JsonRpcApiUtil {
    */
   private static final int MAX_BLOCK_NUM_HEX_LEN = 20;
 
+  // Accepts hex ("0x1a") or, for compatibility, a plain base-10 number ("26").
+  public static final String BLOCK_NUM_REGEX = "^(0x[0-9a-fA-F]+|[0-9]+)$";
+
   /**
    * Parse a JSON-RPC block number (hex "0x..." or decimal) into a long,
    * enforcing the {@link #MAX_BLOCK_NUM_HEX_LEN} length limit, rejecting
-   * negative values, and rejecting values that overflow a signed 64-bit
-   * block number.
+   * signs and non-ASCII digits via {@link #BLOCK_NUM_REGEX}, and rejecting
+   * values that overflow a signed 64-bit block number.
    */
   public static long parseBlockNumber(String blockNum)
       throws JsonRpcInvalidParamsException {
-    if (blockNum == null || blockNum.length() > MAX_BLOCK_NUM_HEX_LEN) {
-      throw new JsonRpcInvalidParamsException(BLOCK_NUM_ERROR);
-    }
-    BigInteger value;
-    try {
-      value = ByteArray.hexToBigInteger(blockNum);
-    } catch (Exception e) {
-      throw new JsonRpcInvalidParamsException(BLOCK_NUM_ERROR);
-    }
-    if (value.signum() < 0) {
+    if (blockNum == null || blockNum.length() > MAX_BLOCK_NUM_HEX_LEN
+        || !Pattern.matches(BLOCK_NUM_REGEX, blockNum)) {
       throw new JsonRpcInvalidParamsException(BLOCK_NUM_ERROR);
     }
     try {
-      return value.longValueExact();
+      return ByteArray.hexToBigInteger(blockNum).longValueExact();
     } catch (ArithmeticException e) {
       throw new JsonRpcInvalidParamsException(BLOCK_NUM_ERROR);
     }
@@ -741,16 +736,15 @@ public class JsonRpcApiUtil {
   }
 
   /**
-   * Max hex digits of a 32-bit int (0x7FFFFFFF). A transaction index fits a signed int, so the
-   * longest valid input is "0x" + 8 hex digits; the +2 in the guard covers the prefix.
+   * A transaction index fits a signed int (0x7FFFFFFF), so at most 8 hex digits.
    */
-  private static final int MAX_TX_INDEX_HEX_LEN = 8;
+  public static final String TX_INDEX_REGEX = "^0x[0-9a-fA-F]{1,8}$";
 
   /**
    * Parse a 0x-prefixed hex transaction index at the JSON-RPC boundary.
    */
   public static int parseTxIndex(String index) throws JsonRpcInvalidParamsException {
-    if (index == null || index.length() > MAX_TX_INDEX_HEX_LEN + 2) {
+    if (index == null || !Pattern.matches(TX_INDEX_REGEX, index)) {
       throw new JsonRpcInvalidParamsException(TX_INDEX_ERROR);
     }
     try {

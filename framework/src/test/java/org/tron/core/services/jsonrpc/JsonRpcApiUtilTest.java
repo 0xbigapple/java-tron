@@ -36,6 +36,16 @@ public class JsonRpcApiUtilTest {
   }
 
   @Test
+  public void parseBlockNumberRejectsSignedAndNonAsciiDigits() {
+    for (String blockNum : new String[] {"0x+1", "0x-0", "+1", "-0", "0x１", "１０",
+        "0x١"}) {
+      JsonRpcInvalidParamsException e = assertThrows(JsonRpcInvalidParamsException.class,
+          () -> JsonRpcApiUtil.parseBlockNumber(blockNum));
+      assertEquals("invalid block number", e.getMessage());
+    }
+  }
+
+  @Test
   public void parseBlockNumberRejectsOverflow() {
     // 2^64 - 1: fits uint64 but overflows signed long
     JsonRpcInvalidParamsException e1 = assertThrows(JsonRpcInvalidParamsException.class,
@@ -197,10 +207,12 @@ public class JsonRpcApiUtilTest {
   }
 
   @Test
-  public void parseTxIndexParsesNegativeForCallerRangeCheck() throws JsonRpcInvalidParamsException {
-    // "0x-1" is syntactically accepted and parsed to a negative int; the RPC handler maps
-    // any out-of-range index (negative or >= tx count) to a null result.
-    assertEquals(-1, JsonRpcApiUtil.parseTxIndex("0x-1"));
+  public void parseTxIndexRejectsSignedAndNonAsciiDigits() {
+    for (String index : new String[] {"0x-1", "0x+1", "0x-0", "0x+0", "0x１", "0x١"}) {
+      JsonRpcInvalidParamsException e = assertThrows(JsonRpcInvalidParamsException.class,
+          () -> JsonRpcApiUtil.parseTxIndex(index));
+      assertEquals("invalid index value", e.getMessage());
+    }
   }
 
   @Test

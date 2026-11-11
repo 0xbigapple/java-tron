@@ -76,7 +76,27 @@ public class BuildArgumentsTest extends BaseTest {
     args.setValue("0x-1");
     JsonRpcInvalidParamsException e = Assert.assertThrows(JsonRpcInvalidParamsException.class,
         () -> args.parseValue());
-    Assert.assertEquals("invalid param value: negative", e.getMessage());
+    Assert.assertEquals("invalid param value: invalid hex number", e.getMessage());
+
+    args.setValue("0x-0");
+    e = Assert.assertThrows(JsonRpcInvalidParamsException.class, () -> args.parseValue());
+    Assert.assertEquals("invalid param value: invalid hex number", e.getMessage());
+  }
+
+  @Test
+  public void parseValueAndGasRejectPlusSign() {
+    BuildArguments args = new BuildArguments();
+    args.setValue("0x+1");
+    args.setGas("0x+1");
+    JsonRpcInvalidParamsException e = Assert.assertThrows(JsonRpcInvalidParamsException.class,
+        () -> args.parseValue());
+    Assert.assertEquals("invalid param value: invalid hex number", e.getMessage());
+    e = Assert.assertThrows(JsonRpcInvalidParamsException.class, () -> args.parseGas());
+    Assert.assertEquals("invalid param value: invalid hex number", e.getMessage());
+
+    args.setValue("0x１");
+    e = Assert.assertThrows(JsonRpcInvalidParamsException.class, () -> args.parseValue());
+    Assert.assertEquals("invalid param value: invalid hex number", e.getMessage());
   }
 
   @Test

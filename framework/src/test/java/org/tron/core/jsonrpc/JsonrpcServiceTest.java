@@ -1145,14 +1145,15 @@ public class JsonrpcServiceTest extends BaseTest {
       Assert.fail();
     }
 
-    // negative index is out of range too -> null (not an Internal error)
-    try {
-      TransactionResult result = tronJsonRpc.getTransactionByBlockNumberAndIndex(
-          ByteArray.toJsonHex(blockCapsule1.getNum()), "0x-1");
-      Assert.assertNull(result);
-    } catch (Exception e) {
-      Assert.fail();
-    }
+    // signed index is rejected as invalid params, on both entry points
+    Exception signedEx = Assert.assertThrows(JsonRpcInvalidParamsException.class,
+        () -> tronJsonRpc.getTransactionByBlockNumberAndIndex(
+            ByteArray.toJsonHex(blockCapsule1.getNum()), "0x-1"));
+    Assert.assertEquals("invalid index value", signedEx.getMessage());
+    Exception signedHashEx = Assert.assertThrows(JsonRpcInvalidParamsException.class,
+        () -> tronJsonRpc.getTransactionByBlockHashAndIndex(
+            ByteArray.toJsonHex(blockCapsule1.getBlockId().getBytes()), "0x+1"));
+    Assert.assertEquals("invalid index value", signedHashEx.getMessage());
 
     // leading zeros are tolerated: "0x00" parses to index 0
     try {
