@@ -1,19 +1,26 @@
 package org.tron.plugins;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.tron.common.utils.PublicMethod.getRandomPrivateKey;
 
+import com.google.common.primitives.Longs;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Collectors;
+import java.util.stream.LongStream;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.After;
 import org.junit.Rule;
 import org.junit.rules.TemporaryFolder;
+import org.rocksdb.RocksDBException;
 import org.tron.api.WalletGrpc;
 import org.tron.common.TestConstants;
 import org.tron.common.application.Application;
@@ -26,6 +33,10 @@ import org.tron.common.utils.TimeoutInterceptor;
 import org.tron.common.utils.Utils;
 import org.tron.core.config.DefaultConfig;
 import org.tron.core.config.args.Args;
+import org.tron.plugins.utils.db.DBInterface;
+import org.tron.plugins.utils.db.DBIterator;
+import org.tron.plugins.utils.db.DbTool;
+import org.tron.protos.Protocol.TransactionRet;
 import picocli.CommandLine;
 
 @Slf4j
@@ -124,9 +135,11 @@ public class DbLiteTest {
     shutdown();
     // delete tran-cache
     FileUtil.deleteDir(Paths.get(dbPath, databaseDir, "trans-cache").toFile());
+    long latestBlockNum = putTransactionRets(Paths.get(dbPath, databaseDir));
     // generate snapshot
     cli.execute(argsForSnapshot);
     Path snapshotDir = Paths.get(dbPath, "snapshot");
+    assertSnapshotTransactionRets(snapshotDir, latestBlockNum);
     if (excludeHistoricalBalance) {
       // when --exclude-historical-balance=true, the lite snapshot must not ship
       // balance-trace / account-trace
@@ -170,6 +183,49 @@ public class DbLiteTest {
     generateSomeTransactions(6);
     shutdown();
     DbLite.reSetRecentBlks();
+  }
+
+  private long putTransactionRets(Path sourceDir) throws IOException {
+    try {
+      DBInterface propertiesDb = DbTool.getDB(sourceDir.toString(), "properties");
+      long latestBlockNum = Longs.fromByteArray(
+          propertiesDb.get("latest_block_header_number".getBytes()));
+      DBInterface transRetDb = DbTool.getDB(sourceDir.toString(), "transactionRetStore");
+      for (long num = 1; num <= latestBlockNum; num++) {
+        transRetDb.put(Longs.toByteArray(num),
+            TransactionRet.newBuilder().setBlockNumber(num).build().toByteArray());
+      }
+      return latestBlockNum;
+    } catch (RocksDBException e) {
+      throw new IOException(e);
+    } finally {
+      DbTool.close();
+    }
+  }
+
+  private void assertSnapshotTransactionRets(Path snapshotDir, long latestBlockNum)
+      throws IOException {
+    List<Long> blockNums = new ArrayList<>();
+    long lowestBlockNum;
+    try {
+      try (DBIterator iterator =
+          DbTool.getDB(snapshotDir.toString(), "block-index").iterator()) {
+        iterator.seek(Longs.toByteArray(1));
+        lowestBlockNum = Longs.fromByteArray(iterator.getKey());
+      }
+      try (DBIterator iterator =
+          DbTool.getDB(snapshotDir.toString(), "transactionRetStore").iterator()) {
+        for (iterator.seekToFirst(); iterator.hasNext(); iterator.next()) {
+          blockNums.add(Longs.fromByteArray(iterator.getKey()));
+        }
+      }
+    } catch (RocksDBException e) {
+      throw new IOException(e);
+    } finally {
+      DbTool.close();
+    }
+    assertEquals(LongStream.rangeClosed(lowestBlockNum, latestBlockNum).boxed()
+        .collect(Collectors.toList()), blockNums);
   }
 
   private void generateSomeTransactions(int during) {

@@ -72,6 +72,8 @@ DB copy provides a helper which can copy LevelDB or RocksDB data quickly on the 
 
 DB lite provides lite database, parameters are compatible with previous `LiteFullNodeTool`.
 
+A snapshot dataset keeps the genesis block and the latest 65536 blocks, together with their transactions and transaction results.
+
 ### Available parameters:
 
 - `-o | --operate`: [split,merge], default: split.
