@@ -1,5 +1,6 @@
 package org.tron.plugins;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -206,6 +207,7 @@ public class DbLiteTest {
   private void assertSnapshotTransactionRets(Path snapshotDir, long latestBlockNum)
       throws IOException {
     List<Long> blockNums = new ArrayList<>();
+    List<byte[]> values = new ArrayList<>();
     long lowestBlockNum;
     try {
       try (DBIterator iterator =
@@ -217,6 +219,7 @@ public class DbLiteTest {
           DbTool.getDB(snapshotDir.toString(), "transactionRetStore").iterator()) {
         for (iterator.seekToFirst(); iterator.hasNext(); iterator.next()) {
           blockNums.add(Longs.fromByteArray(iterator.getKey()));
+          values.add(iterator.getValue());
         }
       }
     } catch (RocksDBException e) {
@@ -226,6 +229,10 @@ public class DbLiteTest {
     }
     assertEquals(LongStream.rangeClosed(lowestBlockNum, latestBlockNum).boxed()
         .collect(Collectors.toList()), blockNums);
+    for (int i = 0; i < blockNums.size(); i++) {
+      assertArrayEquals(TransactionRet.newBuilder().setBlockNumber(blockNums.get(i)).build()
+          .toByteArray(), values.get(i));
+    }
   }
 
   private void generateSomeTransactions(int during) {

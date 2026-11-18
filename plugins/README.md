@@ -72,7 +72,7 @@ DB copy provides a helper which can copy LevelDB or RocksDB data quickly on the 
 
 DB lite provides lite database, parameters are compatible with previous `LiteFullNodeTool`.
 
-A snapshot dataset keeps the genesis block and the latest 65536 blocks, together with their transactions and transaction results.
+A snapshot dataset keeps the genesis block and the latest 65536 blocks, together with their transactions. Transaction results of these blocks are copied as far as the source node has them: none if it ran with `storage.transHistory.switch = off`, and any gap in the source stays in the snapshot. Transaction results that the source node never persisted cannot be recovered from its database; to fill a gap, start from an earlier snapshot with the switch on and sync again.
 
 ### Available parameters:
 

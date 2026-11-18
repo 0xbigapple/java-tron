@@ -448,9 +448,11 @@ public class DbLite implements Callable<Integer> {
    */
   private void fillSnapshotBlockAndTransDb(String sourceDir, String snapshotDir)
           throws IOException, RocksDBException {
-    logger.info("Begin to fill {} block, genesis block and trans to snapshot.", RECENT_BLKS);
+    logger.info("Begin to fill {} block, genesis block, trans and transaction results to snapshot.",
+        RECENT_BLKS);
     spec.commandLine().getOut().format(
-        "Begin to fill %d block, genesis block and trans to snapshot.", RECENT_BLKS).println();
+        "Begin to fill %d block, genesis block, trans and transaction results to snapshot.",
+        RECENT_BLKS).println();
     DBInterface sourceBlockIndexDb = DbTool.getDB(sourceDir, BLOCK_INDEX_DB_NAME);
     DBInterface sourceBlockDb = DbTool.getDB(sourceDir, BLOCK_DB_NAME);
     // init snapshot db ,keep engine same as source
