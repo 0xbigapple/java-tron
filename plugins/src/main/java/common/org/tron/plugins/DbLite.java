@@ -444,19 +444,22 @@ public class DbLite implements Callable<Integer> {
   }
 
   /**
-   * recent blocks, trans and genesis block.
+   * recent blocks, trans, transaction results and genesis block.
    */
   private void fillSnapshotBlockAndTransDb(String sourceDir, String snapshotDir)
           throws IOException, RocksDBException {
-    logger.info("Begin to fill {} block, genesis block and trans to snapshot.", RECENT_BLKS);
+    logger.info("Begin to fill {} block, genesis block, trans and transaction results to snapshot.",
+        RECENT_BLKS);
     spec.commandLine().getOut().format(
-        "Begin to fill %d block, genesis block and trans to snapshot.", RECENT_BLKS).println();
+        "Begin to fill %d block, genesis block, trans and transaction results to snapshot.",
+        RECENT_BLKS).println();
     DBInterface sourceBlockIndexDb = DbTool.getDB(sourceDir, BLOCK_INDEX_DB_NAME);
     DBInterface sourceBlockDb = DbTool.getDB(sourceDir, BLOCK_DB_NAME);
     // init snapshot db ,keep engine same as source
     DBInterface destBlockDb = DbTool.getDB(sourceDir, snapshotDir, BLOCK_DB_NAME);
     DBInterface destBlockIndexDb = DbTool.getDB(sourceDir, snapshotDir, BLOCK_INDEX_DB_NAME);
     DBInterface destTransDb = DbTool.getDB(sourceDir, snapshotDir, TRANS_DB_NAME);
+    DBInterface destTransRetDb = DbTool.getDB(sourceDir, snapshotDir, TRANSACTION_RET_DB_NAME);
     // put genesis block and block-index into snapshot
     long genesisBlockNum = 0L;
     byte[] genesisBlockID = sourceBlockIndexDb.get(ByteArray.fromLong(genesisBlockNum));
@@ -482,12 +485,19 @@ public class DbLite implements Callable<Integer> {
                 tc -> DBUtils.getTransactionId(tc).getBytes())
                 .map(bytes -> Maps.immutableEntry(bytes, Longs.toByteArray(finalBlockNum)))
                 .forEach(e -> destTransDb.put(e.getKey(), e.getValue()));
+            // put transaction result, empty blocks have none
+            byte[] transRet = getNullableDataFromSourceDB(sourceDir, TRANSACTION_RET_DB_NAME,
+                Longs.toByteArray(blockNum));
+            if (!isEmptyBytes(transRet)) {
+              destTransRetDb.put(Longs.toByteArray(blockNum), transRet);
+            }
           } catch (IOException | RocksDBException e) {
             throw new RuntimeException(e.getMessage());
           }
         });
-    // copy engine.properties for block、block-index、trans from source if exist
-    copyEngineIfExist(sourceDir, snapshotDir, BLOCK_DB_NAME, BLOCK_INDEX_DB_NAME, TRANS_DB_NAME);
+    // copy engine.properties for block、block-index、trans、transactionRetStore from source if exist
+    copyEngineIfExist(sourceDir, snapshotDir, BLOCK_DB_NAME, BLOCK_INDEX_DB_NAME, TRANS_DB_NAME,
+        TRANSACTION_RET_DB_NAME);
   }
 
   private void copyEngineIfExist(String source, String dest, String... dbNames) {
@@ -651,22 +661,25 @@ public class DbLite implements Callable<Integer> {
 
   private byte[] getDataFromSourceDB(String sourceDir, String dbName, byte[] key)
           throws IOException, RocksDBException {
-    DBInterface sourceDb = DbTool.getDB(sourceDir, dbName);
-    DBInterface checkpointDb = getCheckpointDb(sourceDir);
-    // get data from tmp first.
-    byte[] valueFromTmp = checkpointDb.get(Bytes.concat(simpleEncode(dbName), key));
-    byte[] value;
-    if (isEmptyBytes(valueFromTmp)) {
-      value = sourceDb.get(key);
-    } else {
-      value = valueFromTmp.length == 1
-          ? null : Arrays.copyOfRange(valueFromTmp, 1, valueFromTmp.length);
-    }
+    byte[] value = getNullableDataFromSourceDB(sourceDir, dbName, key);
     if (isEmptyBytes(value)) {
       throw new RuntimeException(String.format("data not found in store, dbName: %s, key: %s",
               dbName, Arrays.toString(key)));
     }
     return value;
+  }
+
+  private byte[] getNullableDataFromSourceDB(String sourceDir, String dbName, byte[] key)
+          throws IOException, RocksDBException {
+    DBInterface sourceDb = DbTool.getDB(sourceDir, dbName);
+    DBInterface checkpointDb = getCheckpointDb(sourceDir);
+    // get data from tmp first.
+    byte[] valueFromTmp = checkpointDb.get(Bytes.concat(simpleEncode(dbName), key));
+    if (isEmptyBytes(valueFromTmp)) {
+      return sourceDb.get(key);
+    }
+    return valueFromTmp.length == 1
+        ? null : Arrays.copyOfRange(valueFromTmp, 1, valueFromTmp.length);
   }
 
   /**
