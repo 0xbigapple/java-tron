@@ -2,6 +2,7 @@ package org.tron.common.logsfilter;
 
 import static org.tron.core.Constant.ADD_PRE_FIX_BYTE_MAINNET;
 
+import java.math.BigInteger;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -113,10 +114,60 @@ public class EventParserTest {
         "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
     Assert.assertEquals("-1", ContractEventParser.parseDataBytes(negIntData, "int256", 0));
 
-    // trcToken is classified as INT_NUMBER
+    // trcToken is classified as UINT_NUMBER
     byte[] tokenData = ByteArray.fromHexString(
         "0000000000000000000000000000000000000000000000000000000000000064");
     Assert.assertEquals("100", ContractEventParser.parseDataBytes(tokenData, "trcToken", 0));
+  }
+
+  @Test
+  public void testParseUnsignedHighBit() {
+    String maxSigned = "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+    String highBit = "8000000000000000000000000000000000000000000000000000000000000000";
+    String allOnes = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+
+    String twoPow255Minus1 = BigInteger.ONE.shiftLeft(255).subtract(BigInteger.ONE).toString();
+    String twoPow255 = BigInteger.ONE.shiftLeft(255).toString();
+    String twoPow256Minus1 = BigInteger.ONE.shiftLeft(256).subtract(BigInteger.ONE).toString();
+
+    assertIntegerWord(maxSigned, "uint256", twoPow255Minus1);
+    assertIntegerWord(highBit, "uint256", twoPow255);
+    assertIntegerWord(allOnes, "uint256", twoPow256Minus1);
+    assertIntegerWord(allOnes, "uint", twoPow256Minus1);
+    assertIntegerWord(allOnes, "trcToken", twoPow256Minus1);
+    assertIntegerWord(allOnes, "int256", "-1");
+    assertIntegerWord(allOnes, "int", "-1");
+  }
+
+  private void assertIntegerWord(String hex, String type, String expected) {
+    byte[] word = ByteArray.fromHexString(hex);
+    Assert.assertEquals(type + " data", expected,
+        ContractEventParser.parseDataBytes(word, type, 0));
+    Assert.assertEquals(type + " topic", expected, ContractEventParser.parseTopic(word, type));
+  }
+
+  @Test
+  public void testParseEventUnsignedHighBit() {
+    String highBit = "8000000000000000000000000000000000000000000000000000000000000000";
+    ABI.Entry entry = ABI.Entry.newBuilder().setName("UnsignedProbe")
+        .setType(ABI.Entry.EntryType.Event)
+        .addInputs(ABI.Entry.Param.newBuilder().setIndexed(true)
+            .setName("indexedValue").setType("uint256"))
+        .addInputs(ABI.Entry.Param.newBuilder().setIndexed(false)
+            .setName("dataValue").setType("uint256"))
+        .build();
+    byte[] word = ByteArray.fromHexString(highBit);
+    List<byte[]> topicList = new LinkedList<>();
+    topicList.add(Hash.sha3(LogInfoTriggerParser.getEntrySignature(entry).getBytes()));
+    topicList.add(word);
+
+    String expected = BigInteger.ONE.shiftLeft(255).toString();
+    Map<String, String> topicMap = ContractEventParserAbi.parseTopics(topicList, entry);
+    Map<String, String> dataMap = ContractEventParserAbi.parseEventData(word, topicList, entry);
+    Assert.assertEquals(expected, topicMap.get("indexedValue"));
+    Assert.assertEquals(expected, topicMap.get("0"));
+    Assert.assertEquals(expected, dataMap.get("dataValue"));
+    Assert.assertEquals(expected, dataMap.get("1"));
   }
 
   @Test
